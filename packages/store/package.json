@@ -1,0 +1,19 @@
+{
+  "name": "@janus/store",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "dependencies": {
+    "@janus/core": "workspace:*",
+    "@janus/vocabulary": "workspace:*",
+    "kysely": "^0.28.15",
+    "kysely-postgres-js": "^2.0.0",
+    "postgres": "^3.4.7"
+  },
+  "janus": {
+    "tier": "source",
+  }
+}

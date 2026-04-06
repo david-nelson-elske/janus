@@ -1,0 +1,22 @@
+{
+  "name": "janus",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "janus": "bun packages/cli/index.ts",
+    "janus:seed": "bun packages/dev/seed.ts",
+    "janus:chat": "bun packages/dev/chat.ts",
+    "test": "bun test packages/",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --fix .",
+    "format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.4",
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.8.3"
+  }
+}

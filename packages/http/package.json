@@ -1,0 +1,23 @@
+{
+  "name": "@janus/http",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "dependencies": {
+    "@janus/core": "workspace:*",
+    "@janus/client": "workspace:*",
+    "@janus/pipeline": "workspace:*",
+    "@janus/store": "workspace:*",
+    "@janus/vocabulary": "workspace:*",
+    "@preact/signals": "^2.9.0",
+    "hono": "^4.7.0",
+    "preact": "^10.29.0",
+    "preact-render-to-string": "^6.6.0"
+  },
+  "janus": {
+    "tier": "composition",
+  }
+}

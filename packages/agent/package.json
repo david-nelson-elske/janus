@@ -1,0 +1,20 @@
+{
+  "name": "@janus/agent",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.82.0",
+    "openai": "^6.33.0",
+    "@janus/core": "workspace:*",
+    "@janus/pipeline": "workspace:*",
+    "@janus/store": "workspace:*",
+    "@janus/vocabulary": "workspace:*"
+  },
+  "janus": {
+    "tier": "composition",
+  }
+}

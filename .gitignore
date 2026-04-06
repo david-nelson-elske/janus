@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.bun/
+
+# Build and coverage output
+dist/
+/build/
+coverage/
+*.tsbuildinfo
+
+# Runtime and temp files
+.cache/
+tmp/
+temp/
+
+# Environment and local secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+bun-debug.log*
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~
+
+# Test artifacts
+test-results/
+
+# SQLite databases (generated, not committed)
+*.db
+*.db-shm
+*.db-wal
+
+# Janus snapshots (local, not committed)
+.janus/

@@ -1,0 +1,19 @@
+{
+  "name": "@janus/cli",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./commands": "./commands.ts"
+  },
+  "dependencies": {
+    "@janus/core": "workspace:*",
+    "@janus/store": "workspace:*",
+    "@janus/pipeline": "workspace:*",
+    "@janus/vocabulary": "workspace:*"
+  },
+  "janus": {
+    "tier": "source",
+  }
+}

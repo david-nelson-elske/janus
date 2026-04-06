@@ -1,0 +1,4 @@
+janus.db
+janus.db-wal
+janus.db-shm
+logs/

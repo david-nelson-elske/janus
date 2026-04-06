@@ -1,0 +1,19 @@
+{
+  "name": "@janus/pipeline",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "dependencies": {
+    "@janus/core": "workspace:*",
+    "@janus/store": "workspace:*",
+    "@janus/vocabulary": "workspace:*",
+    "jose": "^6.0.11",
+    "liquidjs": "^10.25.2"
+  },
+  "janus": {
+    "tier": "source",
+  }
+}

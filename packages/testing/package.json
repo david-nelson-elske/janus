@@ -1,0 +1,13 @@
+{
+  "name": "@janus/testing",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "main": "index.ts",
+  "dependencies": {
+    "@janus/core": "workspace:*",
+    "@janus/pipeline": "workspace:*",
+    "@janus/store": "workspace:*",
+    "@janus/vocabulary": "workspace:*"
+  }
+}
