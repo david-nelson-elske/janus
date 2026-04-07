@@ -92,7 +92,7 @@ function escapeHtml(s: string): string {
 // ── Styles ─────────────────────────────────────────────────────────
 
 // ── DESIGN.md: Janus Design System (based on Linear) ──────────────
-// See packages/dev/DESIGN.md for the full specification.
+// See examples/dev-app/DESIGN.md for the full specification.
 
 const CSS_RESET = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }

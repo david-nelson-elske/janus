@@ -5,7 +5,7 @@
  *
  * Usage:
  *   bun run janus:chat
- *   ANTHROPIC_API_KEY=sk-... bun packages/dev/chat.ts
+ *   ANTHROPIC_API_KEY=sk-... bun examples/dev-app/chat.ts
  */
 
 import * as readline from 'node:readline';

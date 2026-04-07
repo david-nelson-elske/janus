@@ -1,7 +1,7 @@
 /**
  * Demo server — boots the demo app and serves at localhost:3000.
  *
- * Usage: bun packages/dev/serve.ts
+ * Usage: bun examples/dev-app/serve.ts
  *
  * Serves:
  * - API at /api/* (CRUD + lifecycle transitions)
@@ -35,7 +35,7 @@ async function main() {
       ...allBindings,
     ],
     surfaces: [surface],
-    store: { path: 'packages/dev/janus.db' },
+    store: { path: 'examples/dev-app/janus.db' },
   });
 
   const server = Bun.serve({

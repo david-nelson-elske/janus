@@ -10,6 +10,21 @@
         "typescript": "^5.8.3",
       },
     },
+    "examples/dev-app": {
+      "name": "@janus/dev",
+      "version": "0.0.1",
+      "dependencies": {
+        "@janus/agent": "workspace:*",
+        "@janus/client": "workspace:*",
+        "@janus/core": "workspace:*",
+        "@janus/http": "workspace:*",
+        "@janus/pipeline": "workspace:*",
+        "@janus/store": "workspace:*",
+        "@janus/vocabulary": "workspace:*",
+        "preact": "^10.29.0",
+        "preact-render-to-string": "^6.6.0",
+      },
+    },
     "packages/agent": {
       "name": "@janus/agent",
       "version": "0.0.1",
@@ -53,21 +68,6 @@
       "version": "0.0.1",
       "dependencies": {
         "@janus/vocabulary": "workspace:*",
-      },
-    },
-    "packages/dev": {
-      "name": "@janus/dev",
-      "version": "0.0.1",
-      "dependencies": {
-        "@janus/agent": "workspace:*",
-        "@janus/client": "workspace:*",
-        "@janus/core": "workspace:*",
-        "@janus/http": "workspace:*",
-        "@janus/pipeline": "workspace:*",
-        "@janus/store": "workspace:*",
-        "@janus/vocabulary": "workspace:*",
-        "preact": "^10.29.0",
-        "preact-render-to-string": "^6.6.0",
       },
     },
     "packages/http": {
@@ -155,7 +155,7 @@
 
     "@janus/core": ["@janus/core@workspace:packages/core"],
 
-    "@janus/dev": ["@janus/dev@workspace:packages/dev"],
+    "@janus/dev": ["@janus/dev@workspace:examples/dev-app"],
 
     "@janus/http": ["@janus/http@workspace:packages/http"],
 

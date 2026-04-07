@@ -5,7 +5,7 @@
  * Boots the demo app and executes a command against it.
  */
 
-import { boot } from '../dev/app';
+import { boot } from '../../examples/dev-app/app';
 import { parseArgs, executeCommand } from './commands';
 
 async function main() {

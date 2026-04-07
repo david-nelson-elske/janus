@@ -3,7 +3,7 @@
  * Seed the demo database with development tracking data.
  *
  * Loads all ADR-124 sub-documents for full-text search testing.
- * Run: bun packages/dev/seed.ts
+ * Run: bun examples/dev-app/seed.ts
  */
 
 import { boot } from './app';
@@ -149,7 +149,7 @@ async function seed() {
   });
   console.log('  Test run recorded');
 
-  console.log('\nDone. Database: packages/dev/janus.db');
+  console.log('\nDone. Database: examples/dev-app/janus.db');
 }
 
 seed().catch((err) => {

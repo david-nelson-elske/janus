@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { clearRegistry } from '@janus/core';
 import type { CompileResult } from '@janus/core';
 import type { DispatchRuntime } from '@janus/pipeline';
-import { boot } from '../../dev/app';
+import { boot } from '../../../examples/dev-app/app';
 import { parseArgs, executeCommand } from '../commands';
 
 let runtime: DispatchRuntime;

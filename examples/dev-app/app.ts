@@ -58,7 +58,7 @@ export async function boot(configOrDbPath?: string | BootConfig): Promise<DemoAp
 
   // 3. Create store adapters
   const sqliteAdapter = createSqliteAdapter({
-    path: config.dbPath ?? 'packages/dev/janus.db',
+    path: config.dbPath ?? 'examples/dev-app/janus.db',
   });
   const memoryAdapter = createMemoryAdapter();
 

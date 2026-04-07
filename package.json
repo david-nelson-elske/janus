@@ -2,12 +2,13 @@
   "name": "janus",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "examples/*"
   ],
   "scripts": {
     "janus": "bun packages/cli/index.ts",
-    "janus:seed": "bun packages/dev/seed.ts",
-    "janus:chat": "bun packages/dev/chat.ts",
+    "janus:seed": "bun examples/dev-app/seed.ts",
+    "janus:chat": "bun examples/dev-app/chat.ts",
     "test": "bun test packages/",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
