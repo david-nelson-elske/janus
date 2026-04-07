@@ -17,6 +17,7 @@ import type { Sensitivity } from '@janus/vocabulary';
 import type {
   AgentSessionContext,
   FocusedEntityContext,
+  NavigationDescriptor,
   SessionBindingEntry,
   SessionRecord,
   ToolDescriptor,
@@ -154,6 +155,50 @@ export function discoverTools(
       fields: cached.fields,
       ...(cached.transitions.length > 0 ? { transitions: cached.transitions } : {}),
     });
+  }
+
+  return Object.freeze(tools);
+}
+
+// ── Navigation tool discovery ─────────────────────────────────
+
+/**
+ * Discover navigation tools from the binding index.
+ *
+ * For each consumer entity with a list or detail binding, produces a
+ * NavigationDescriptor with the derived route path. Uses the same
+ * pluralization convention as the HTTP layer (entity + "s").
+ */
+export function discoverNavigationTools(
+  registry: CompileResult,
+): readonly NavigationDescriptor[] {
+  const tools: NavigationDescriptor[] = [];
+
+  for (const [name, node] of registry.graphNodes) {
+    if (node.origin === 'framework') continue;
+
+    const plural = `${name}s`;
+    const label = name.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+    if (registry.bindingIndex.byEntityAndView(name, 'list')) {
+      tools.push({
+        entity: name,
+        view: 'list',
+        path: `/${plural}`,
+        label: `${label} list`,
+        requiresId: false,
+      });
+    }
+
+    if (registry.bindingIndex.byEntityAndView(name, 'detail')) {
+      tools.push({
+        entity: name,
+        view: 'detail',
+        path: `/${plural}/:id`,
+        label: `${label} detail`,
+        requiresId: true,
+      });
+    }
   }
 
   return Object.freeze(tools);

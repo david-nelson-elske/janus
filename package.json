@@ -3,7 +3,10 @@
   "private": true,
   "workspaces": [
     "packages/*",
-    "examples/*"
+    "examples/*",
+    "../PPC/perspicuity",
+    "../projects/balcony-solar",
+    "../solar-education"
   ],
   "scripts": {
     "janus": "bun packages/cli/index.ts",
@@ -19,5 +22,10 @@
     "@biomejs/biome": "^2.4.4",
     "@types/bun": "^1.2.0",
     "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.85.0",
+    "jose": "^6.2.2",
+    "xlsx": "^0.18.5"
   }
 }

@@ -6,13 +6,16 @@
  */
 
 import type { Context } from 'hono';
+import { getCookie } from 'hono/cookie';
 import type { CompileResult, Identity } from '@janus/core';
-import { SYSTEM } from '@janus/core';
+import { ANONYMOUS } from '@janus/core';
 import { createBindingContext } from '@janus/client';
 import type { BindingContext } from '@janus/client';
 import type { DispatchRuntime } from '@janus/pipeline';
 import { resolvePageRoute } from './page-router';
+import { resolveSessionIdentity } from './session-resolve';
 import { renderPage } from './ssr-renderer';
+import { SESSION_COOKIE } from './auth-routes';
 
 export interface PageHandlerConfig {
   readonly registry: CompileResult;
@@ -33,7 +36,13 @@ export function createPageHandler(config: PageHandlerConfig) {
       return c.notFound();
     }
 
-    const identity: Identity = SYSTEM; // TODO: resolve from request
+    // Resolve identity from session cookie, fall back to ANONYMOUS
+    let identity: Identity = ANONYMOUS;
+    const sessionToken = getCookie(c, SESSION_COOKIE);
+    if (sessionToken) {
+      const resolved = await resolveSessionIdentity(runtime, sessionToken);
+      if (resolved) identity = resolved;
+    }
     const binding = registry.bindingIndex.byEntityAndView(route.entity, route.view);
     if (!binding) {
       return c.notFound();
@@ -103,8 +112,12 @@ export function createPageHandler(config: PageHandlerConfig) {
   };
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 function renderErrorPage(message: string): string {
   return `<!DOCTYPE html>
 <html><head><title>Error</title></head>
-<body><h1>Error</h1><p>${message}</p></body></html>`;
+<body><h1>Error</h1><p>${escapeHtml(message)}</p></body></html>`;
 }

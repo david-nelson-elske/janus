@@ -139,10 +139,10 @@ describe('subscribe() descriptor variants', () => {
     ]);
 
     expect(result.records).toHaveLength(1);
-    const trigger = result.records[0].trigger as { kind: string; on: { kind: string; action: string } };
+    const trigger = result.records[0].trigger as { kind: string; on: { kind: string; name: string } };
     expect(trigger.kind).toBe('event');
     expect(trigger.on.kind).toBe('acted');
-    expect(trigger.on.action).toBe('publish');
+    expect(trigger.on.name).toBe('publish');
   });
 
   test('mixed event descriptors in same subscribe() call', () => {

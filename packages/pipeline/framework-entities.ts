@@ -9,7 +9,7 @@
  */
 
 import { define, participate } from '@janus/core';
-import { Str, Int, DateTime, Json, Enum, Reference, Persistent, Volatile, hours } from '@janus/vocabulary';
+import { Str, Int, DateTime, Json, Enum, Reference, Token, Lifecycle, Singleton, Persistent, Volatile, hours } from '@janus/vocabulary';
 
 /**
  * execution_log — records what pipeline concerns and subscription adapters did.
@@ -137,5 +137,69 @@ export const templateParticipation = participate(template, {
   emit: false,
 });
 
-export const frameworkEntities = [executionLog, agentSession, connectorBinding, asset, template];
-export const frameworkParticipations = [executionLogParticipation, agentSessionParticipation, connectorBindingParticipation, assetParticipation, templateParticipation];
+// ── oidc_provider — OIDC provider configuration (Singleton) ──
+
+export const oidcProvider = define('oidc_provider', {
+  schema: {
+    issuer: Str(),
+    client_id: Str(),
+    client_secret: Str(),
+    roles_claim: Str(),
+    scope_claim: Str(),
+    role_map: Json(),
+    identity_entity: Str(),
+    subject_field: Str(),
+  },
+  storage: Singleton({
+    defaults: {
+      issuer: '',
+      client_id: '',
+      client_secret: '',
+      roles_claim: 'realm_access.roles',
+      scope_claim: 'scope',
+    },
+  }),
+  description: 'OIDC provider configuration',
+  origin: 'framework',
+});
+
+export const oidcProviderParticipation = participate(oidcProvider, {
+  parse: false,
+  validate: false,
+  emit: false,
+  policy: { rules: [
+    { role: 'system', operations: '*' as const },
+    { role: 'admin', operations: '*' as const },
+  ] },
+});
+
+// ── session — auth sessions (Persistent) ─────────────────────
+
+export const session = define('session', {
+  schema: {
+    subject: Str({ required: true }),
+    identity_id: Str(),
+    token: Token({ length: 32, expires: '24h' }),
+    refresh_token: Str(),
+    provider: Str({ required: true }),
+    status: Lifecycle({ active: ['expired', 'revoked'], expired: [], revoked: [] }),
+  },
+  indexes: [
+    { fields: ['subject'], unique: false },
+  ],
+  storage: Persistent(),
+  owned: true,
+  description: 'Auth sessions — browser and API',
+  origin: 'framework',
+});
+
+export const sessionParticipation = participate(session, {
+  emit: false,
+  policy: { rules: [
+    { role: 'system', operations: '*' as const },
+    { role: 'admin', operations: '*' as const },
+  ] },
+});
+
+export const frameworkEntities = [executionLog, agentSession, connectorBinding, asset, template, oidcProvider, session];
+export const frameworkParticipations = [executionLogParticipation, agentSessionParticipation, connectorBindingParticipation, assetParticipation, templateParticipation, oidcProviderParticipation, sessionParticipation];

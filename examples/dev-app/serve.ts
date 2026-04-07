@@ -10,7 +10,7 @@
  */
 
 import { clearRegistry } from '@janus/core';
-import { createApp, apiSurface } from '@janus/http';
+import { createApp } from '@janus/http';
 import { allDefinitions } from './entities';
 import { allParticipations } from './participation';
 import { allSubscriptions } from './subscriptions';
@@ -19,14 +19,6 @@ import { allBindings } from './bindings';
 async function main() {
   clearRegistry();
 
-  const surface = apiSurface({
-    identity: {
-      keys: {
-        'demo-key': { id: 'demo-user', roles: ['admin'] },
-      },
-    },
-  });
-
   const app = await createApp({
     declarations: [
       ...allDefinitions,
@@ -34,7 +26,8 @@ async function main() {
       ...allSubscriptions,
       ...allBindings,
     ],
-    surfaces: [surface],
+    http: { basePath: '/api' },
+    apiKeys: { 'demo-key': { id: 'demo-user', roles: ['admin'] } },
     store: { path: 'examples/dev-app/janus.db' },
   });
 

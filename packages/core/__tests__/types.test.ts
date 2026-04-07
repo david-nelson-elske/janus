@@ -47,7 +47,7 @@ describe('EventDescriptor', () => {
     const acted = Acted('pin');
     expect(Object.isFrozen(acted)).toBe(true);
     expect(acted.kind).toBe('acted');
-    expect((acted as { action: string }).action).toBe('pin');
+    expect((acted as { name: string }).name).toBe('pin');
   });
 
   test('isMutationEvent returns true for created/updated/deleted', () => {

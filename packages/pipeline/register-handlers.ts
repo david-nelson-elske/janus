@@ -6,7 +6,7 @@
  */
 
 import type { ExecutionHandler } from '@janus/core';
-import { clearRegistry, FRAMEWORK_HANDLERS, handler } from '@janus/core';
+import { FRAMEWORK_HANDLERS, handler } from '@janus/core';
 import { schemaParse } from './concerns/schema-parse';
 import { schemaValidate } from './concerns/schema-validate';
 import { storeRead, storeCreate, storeUpdate, storeDelete } from './concerns/store-handlers';
@@ -25,6 +25,7 @@ import { httpRespond } from './concerns/http-respond';
 import { agentReceive } from './concerns/agent-receive';
 import { agentIdentity } from './concerns/agent-identity';
 import { agentRespond } from './concerns/agent-respond';
+import { identityProvision } from './concerns/identity-provision';
 import { createRateLimitCheck } from './concerns/rate-limit-check';
 import { createRateLimitStore } from './rate-limit-store';
 import type { RateLimitStore } from './rate-limit-store';
@@ -42,7 +43,6 @@ export function getRateLimitStore(): RateLimitStore {
  * Call this instead of seedHandlers() for M2+ boots.
  */
 export function registerHandlers(): void {
-  clearRegistry();
   _rateLimitStore = createRateLimitStore();
 
   const implementations: Readonly<Record<string, ExecutionHandler>> = {
@@ -65,6 +65,7 @@ export function registerHandlers(): void {
     'connector-distribute': connectorDistribute,
     'http-receive': httpReceive,
     'http-identity': httpIdentity,
+    'identity-provision': identityProvision,
     'http-respond': httpRespond,
     'agent-receive': agentReceive,
     'agent-identity': agentIdentity,
@@ -72,6 +73,6 @@ export function registerHandlers(): void {
   };
 
   for (const { key, description } of FRAMEWORK_HANDLERS) {
-    handler(key, implementations[key] ?? (async () => {}), description);
+    handler(key, implementations[key] ?? (async () => {}), description, true);
   }
 }

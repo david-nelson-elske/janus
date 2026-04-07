@@ -13,10 +13,12 @@
  * Falls back to ANONYMOUS if no credentials or validation fails.
  */
 
-import type { ExecutionHandler, Identity } from '@janus/core';
+import type { ExecutionHandler, Identity, ConcernContext, EntityRecord } from '@janus/core';
 import { ANONYMOUS, setIdentity } from '@janus/core';
 import { createRemoteJWKSet, jwtVerify, errors as joseErrors } from 'jose';
 import type { JWTPayload, JWTVerifyGetKey } from 'jose';
+
+const SESSION_COOKIE_NAME = 'janus_session';
 
 // ── Config types ────────────────────────────────────────────────
 
@@ -36,6 +38,12 @@ export interface OidcConfig {
    * Default: 'scope' (space-separated string, split automatically).
    */
   readonly scopesClaim?: string;
+  /**
+   * Map OIDC role names to framework policy group names.
+   * Unmapped roles pass through unchanged.
+   * Example: `{ 'board-member': 'board', 'realm-admin': 'admin' }`
+   */
+  readonly roleMap?: Readonly<Record<string, string>>;
 }
 
 export interface HttpIdentityConfig {
@@ -63,6 +71,42 @@ function getJwks(issuer: string): JWTVerifyGetKey {
 
 export function clearJwksCache(): void {
   jwksCache.clear();
+  _oidcProviderCache = undefined;
+}
+
+// ── OIDC provider entity cache ─────────────────────────────────
+
+/**
+ * Cached OIDC config read from the oidc_provider singleton entity.
+ * Read once on first request, cleared on clearJwksCache().
+ */
+let _oidcProviderCache: OidcConfig | null | undefined;
+
+async function resolveOidcConfig(ctx: ConcernContext, participationConfig: HttpIdentityConfig): Promise<OidcConfig | undefined> {
+  // Participation record config takes priority (backward compat / tests)
+  if (participationConfig?.oidc) return participationConfig.oidc;
+
+  // Read from oidc_provider entity (cached)
+  if (_oidcProviderCache !== undefined) return _oidcProviderCache ?? undefined;
+
+  try {
+    const record = await ctx.store.read('oidc_provider', { id: '_s:oidc_provider' });
+    if (record && 'id' in record && record.issuer && record.client_id) {
+      _oidcProviderCache = Object.freeze({
+        issuer: record.issuer as string,
+        clientId: record.client_id as string,
+        rolesClaim: (record.roles_claim as string) || undefined,
+        scopesClaim: (record.scope_claim as string) || undefined,
+        roleMap: record.role_map as Record<string, string> | undefined,
+      });
+      return _oidcProviderCache;
+    }
+  } catch {
+    // oidc_provider entity may not exist (e.g., in minimal test setups)
+  }
+
+  _oidcProviderCache = null;
+  return undefined;
 }
 
 // ── Claim extraction ────────────────────────────────────────────
@@ -93,11 +137,12 @@ export const httpIdentity: ExecutionHandler = async (ctx) => {
   const config = ctx.config as unknown as HttpIdentityConfig;
 
   // Strategy 1: OIDC JWT via Authorization: Bearer <token>
-  if (config?.oidc) {
+  const oidcConfig = await resolveOidcConfig(ctx, config);
+  if (oidcConfig) {
     const authHeader = headers['authorization'] ?? headers['Authorization'];
     if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
       const token = authHeader.slice(7);
-      const identity = await resolveOidcIdentity(token, config.oidc);
+      const identity = await resolveOidcIdentity(token, oidcConfig);
       if (identity) {
         setIdentity(ctx, identity);
         return;
@@ -106,7 +151,21 @@ export const httpIdentity: ExecutionHandler = async (ctx) => {
     }
   }
 
-  // Strategy 2: API key via X-API-Key header
+  // Strategy 2: Session cookie (janus_session)
+  const cookieHeader = headers['cookie'];
+  if (cookieHeader) {
+    const sessionToken = parseCookieValue(cookieHeader, SESSION_COOKIE_NAME);
+    if (sessionToken) {
+      const identity = await resolveSessionCookie(ctx, sessionToken);
+      if (identity) {
+        setIdentity(ctx, identity);
+        return;
+      }
+    }
+  }
+
+  // Strategy 3: API key via X-API-Key header
+  // Note: header keys are normalized to lowercase by the HTTP surface (hono-app.ts)
   const apiKey = headers['x-api-key'];
   if (apiKey && config?.keys) {
     const resolved = config.keys[apiKey];
@@ -118,6 +177,39 @@ export const httpIdentity: ExecutionHandler = async (ctx) => {
 
   setIdentity(ctx, ANONYMOUS);
 };
+
+// ── Session cookie resolution ──────────────────────────────────
+
+function parseCookieValue(cookieHeader: string, name: string): string | undefined {
+  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+  return match?.[1];
+}
+
+async function resolveSessionCookie(ctx: ConcernContext, sessionToken: string): Promise<Identity | null> {
+  try {
+    const result = await ctx.store.read('session', { where: { token: sessionToken } });
+    if (!result || !('records' in result)) return null;
+
+    const records = (result as { records: EntityRecord[] }).records;
+    if (records.length === 0) return null;
+
+    const session = records[0];
+
+    // Check session is active
+    if (session.status !== 'active') return null;
+
+    // Check token expiry
+    const expiresAt = session._tokenExpiresAt as string | undefined;
+    if (expiresAt && new Date(expiresAt).getTime() < Date.now()) return null;
+
+    return Object.freeze({
+      id: (session.identity_id as string) || (session.subject as string),
+      roles: Object.freeze(['user'] as readonly string[]),
+    });
+  } catch {
+    return null;
+  }
+}
 
 // ── OIDC resolution ─────────────────────────────────────────────
 
@@ -136,7 +228,10 @@ async function resolveOidcIdentity(token: string, oidc: OidcConfig): Promise<Ide
     const rolesClaim = oidc.rolesClaim ?? 'realm_access.roles';
     const scopesClaim = oidc.scopesClaim ?? 'scope';
 
-    const roles = extractClaimList(payload, rolesClaim);
+    const rawRoles = extractClaimList(payload, rolesClaim);
+    const roles = oidc.roleMap
+      ? rawRoles.map(r => oidc.roleMap![r] ?? r)
+      : rawRoles;
     const scopes = extractClaimList(payload, scopesClaim);
 
     return Object.freeze({

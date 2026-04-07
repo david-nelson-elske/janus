@@ -18,6 +18,7 @@ import type { HttpResponse } from '@janus/pipeline';
 import { deriveRouteTable } from './route-table';
 import { createSseHandler } from './sse-handler';
 import { createPageHandler } from './page-handler';
+import { resolveSessionIdentity } from './session-resolve';
 
 export interface CreateHttpAppConfig {
   readonly registry: CompileResult;
@@ -26,6 +27,7 @@ export interface CreateHttpAppConfig {
   readonly connectionManager?: ConnectionManager;
   readonly assetBackend?: AssetBackend;
   readonly enablePages?: boolean;
+  readonly authRoutes?: import('hono').Hono;
 }
 
 /**
@@ -34,6 +36,19 @@ export interface CreateHttpAppConfig {
 export function createHttpApp(config: CreateHttpAppConfig): Hono {
   const app = new Hono();
 
+  // Security headers
+  app.use('*', async (c, next) => {
+    await next();
+    c.header('X-Content-Type-Options', 'nosniff');
+    c.header('X-Frame-Options', 'DENY');
+    c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  });
+
+  // Auth routes (login/callback/logout/me) — mounted before API routes
+  if (config.authRoutes) {
+    app.route('', config.authRoutes);
+  }
+
   for (const surface of config.surfaces) {
     const routes = deriveRouteTable(config.registry, surface.initiator.name, surface.basePath);
 
@@ -41,6 +56,28 @@ export function createHttpApp(config: CreateHttpAppConfig): Hono {
     if (config.connectionManager) {
       const sseHandler = createSseHandler({
         connectionManager: config.connectionManager,
+        resolveUserId: async (req: Request) => {
+          // Try session cookie
+          const cookieHeader = req.headers.get('cookie');
+          if (cookieHeader) {
+            const match = cookieHeader.match(/(?:^|;\s*)janus_session=([^;]*)/);
+            if (match?.[1]) {
+              const identity = await resolveSessionIdentity(config.runtime, match[1]);
+              if (identity) return identity.id;
+            }
+          }
+          // Try API key — extract from surface identity config
+          const apiKey = req.headers.get('x-api-key');
+          if (apiKey) {
+            const identityConfig = surface.initiator.participations?.find(
+              (p) => p.handler === 'http-identity',
+            )?.config as { keys?: Record<string, { id: string }> } | undefined;
+            if (identityConfig?.keys?.[apiKey]) {
+              return identityConfig.keys[apiKey].id;
+            }
+          }
+          return null;
+        },
       });
       app.get(`${surface.basePath}/events`, sseHandler);
     }
@@ -175,10 +212,28 @@ export function createHttpApp(config: CreateHttpAppConfig): Hono {
       }
 
       if (qrCodeFields.length > 0) {
+        // Rate limit: per-IP, 10 attempts per minute
+        const verifyAttempts = new Map<string, { count: number; resetAt: number }>();
+        const VERIFY_WINDOW_MS = 60_000;
+        const VERIFY_MAX = 10;
+
         app.get(`${surface.basePath}/verify/:code`, async (c) => {
           const code = c.req.param('code');
           if (!code) {
             return c.json({ ok: false, error: { kind: 'parse-error', message: 'Missing code parameter' } }, 400);
+          }
+
+          // Rate limiting by IP
+          const ip = c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
+          const now = Date.now();
+          const entry = verifyAttempts.get(ip);
+          if (entry && entry.resetAt > now) {
+            if (entry.count >= VERIFY_MAX) {
+              return c.json({ ok: false, error: { kind: 'rate-limit-exceeded', message: 'Too many verification attempts' } }, 429);
+            }
+            entry.count++;
+          } else {
+            verifyAttempts.set(ip, { count: 1, resetAt: now + VERIFY_WINDOW_MS });
           }
 
           for (const qr of qrCodeFields) {
@@ -200,29 +255,24 @@ export function createHttpApp(config: CreateHttpAppConfig): Hono {
             const record = records && records.length > 0 ? records[0] : (data.id ? data : null);
             if (!record) continue;
 
-            // Check expiry
+            // Check expiry — return same 404 as not-found to prevent enumeration
             if (qr.expiresWith) {
               const expiresAt = record[qr.expiresWith];
               if (expiresAt) {
                 const expiresTime = typeof expiresAt === 'string' ? new Date(expiresAt).getTime() : Number(expiresAt);
                 if (Date.now() > expiresTime) {
-                  return c.json({
-                    ok: false,
-                    error: { kind: 'expired', message: 'Code has expired' },
-                    entity: qr.entity,
-                    id: record.id,
-                  }, 410);
+                  return c.json({ ok: false, error: { kind: 'not-found', message: 'Code not found' } }, 404);
                 }
               }
             }
 
+            // Return minimal verification response — do not expose full record
             return c.json({
               ok: true,
               entity: qr.entity,
               id: record.id,
               field: qr.field,
               singleUse: qr.singleUse ?? false,
-              record,
             }, 200);
           }
 

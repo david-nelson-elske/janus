@@ -15,11 +15,13 @@ import type {
   CompileResult,
   DeclarationRecord,
   DispatchResponse,
+  EntityRecord,
   EntityStore,
   Identity,
   InitiatorConfig,
+  ParticipationRecord,
 } from '@janus/core';
-import { compile, SYSTEM } from '@janus/core';
+import { compile, isReadPage, SYSTEM } from '@janus/core';
 import {
   registerHandlers,
   createDispatchRuntime,
@@ -30,14 +32,21 @@ import {
   createConnectionManager,
   startBrokerSseBridge,
 } from '@janus/pipeline';
-import type { DispatchRuntime, Broker, ConnectionManager } from '@janus/pipeline';
+import type { DispatchRuntime, Broker, ConnectionManager, OidcConfig } from '@janus/pipeline';
 import { createSqliteAdapter, createMemoryAdapter, createDerivedAdapter, createEntityStore } from '@janus/store';
 import { Hono } from 'hono';
 import { createHttpApp } from './hono-app';
 import { apiSurface } from './surface';
+import { createAuthRoutes } from './auth-routes';
+import type { OidcProviderRecord } from './auth-routes';
 
 export interface AppConfig {
   readonly declarations: readonly DeclarationRecord[];
+  /** HTTP surface configuration. When set, derives API routes at the given basePath. */
+  readonly http?: { readonly basePath?: string };
+  /** API key → Identity map for dev/testing. Used by the HTTP identity handler. */
+  readonly apiKeys?: Readonly<Record<string, Identity>>;
+  /** @deprecated Use `http` and `apiKeys` instead. Kept for backward compatibility. */
   readonly surfaces?: readonly ReturnType<typeof apiSurface>[];
   readonly store?: { readonly path?: string };
   /** Asset storage backend (ADR 08b). When set, enables upload/serving routes. */
@@ -70,6 +79,21 @@ export async function createApp(config: AppConfig): Promise<App> {
   const initiators: InitiatorConfig[] = [];
   const surfaceConfigs: { initiator: InitiatorConfig; basePath: string }[] = [];
 
+  // New API: http + apiKeys → create surface internally
+  if (config.http) {
+    const basePath = config.http.basePath ?? '/api';
+    const participations: ParticipationRecord[] = [
+      { source: 'api-surface', handler: 'http-receive', order: 5, transactional: false, config: { basePath } },
+      { source: 'api-surface', handler: 'http-identity', order: 6, transactional: false, config: config.apiKeys ? { keys: config.apiKeys } : {} },
+      { source: 'api-surface', handler: 'identity-provision', order: 7, transactional: false, config: {} },
+      { source: 'api-surface', handler: 'http-respond', order: 80, transactional: false, config: {} },
+    ];
+    const initiator: InitiatorConfig = { name: 'api-surface', origin: 'consumer', participations };
+    initiators.push(initiator);
+    surfaceConfigs.push({ initiator, basePath });
+  }
+
+  // Deprecated API: surfaces (backward compat)
   if (config.surfaces) {
     for (const s of config.surfaces) {
       initiators.push(s.initiator);
@@ -123,6 +147,23 @@ export async function createApp(config: AppConfig): Promise<App> {
     sseBridgeUnsub = startBrokerSseBridge({ broker, connectionManager, store });
   }
 
+  // Phase 5.5: Auth routes — read oidc_provider and create auth routes if configured
+  let authRoutes: Hono | undefined;
+  if (surfaceConfigs.length > 0) {
+    try {
+      const oidcRecord = await store.read('oidc_provider', { id: '_s:oidc_provider' });
+      if (oidcRecord && 'id' in oidcRecord) {
+        const oidcProvider = oidcRecord as unknown as OidcProviderRecord;
+        if (oidcProvider.issuer && oidcProvider.client_id) {
+          const basePath = surfaceConfigs[0].basePath;
+          authRoutes = createAuthRoutes({ oidcProvider, runtime, basePath });
+        }
+      }
+    } catch {
+      // oidc_provider entity not available — auth routes not mounted
+    }
+  }
+
   // Phase 6: HTTP
   let honoApp: Hono;
   if (surfaceConfigs.length > 0) {
@@ -133,6 +174,7 @@ export async function createApp(config: AppConfig): Promise<App> {
       connectionManager: enableSse ? connectionManager : undefined,
       assetBackend: config.assetBackend,
       enablePages: config.enablePages,
+      authRoutes,
     });
   } else {
     honoApp = new Hono();

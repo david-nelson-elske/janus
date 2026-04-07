@@ -312,7 +312,7 @@ async function applyChange(ctx: ApplyContext): Promise<void> {
         await sql`ALTER TABLE ${sql.ref(table)} ADD COLUMN ${sql.ref(change.field!)} ${sql.raw(sqlType)} DEFAULT ${sql.lit(backfillValue)}`.execute(db);
         await sql`UPDATE ${sql.ref(table)} SET ${sql.ref(change.field!)} = ${sql.lit(backfillValue)} WHERE ${sql.ref(change.field!)} IS NULL`.execute(db);
       } else {
-        await sql.raw(`ALTER TABLE "${table}" ADD COLUMN "${change.field}" ${sqlType}`).execute(db);
+        await sql`ALTER TABLE ${sql.ref(table)} ADD COLUMN ${sql.ref(change.field!)} ${sql.raw(sqlType)}`.execute(db);
       }
       break;
     }
@@ -321,19 +321,19 @@ async function applyChange(ctx: ApplyContext): Promise<void> {
       if (!evolve?.renames) break;
       const oldName = Object.entries(evolve.renames).find(([, v]) => v === change.field)?.[0];
       if (!oldName) break;
-      await sql.raw(`ALTER TABLE "${table}" RENAME COLUMN "${oldName}" TO "${change.field}"`).execute(db);
+      await sql`ALTER TABLE ${sql.ref(table)} RENAME COLUMN ${sql.ref(oldName)} TO ${sql.ref(change.field!)}`.execute(db);
       break;
     }
 
     case 'remove-column': {
-      await sql.raw(`ALTER TABLE "${table}" DROP COLUMN "${change.field}"`).execute(db);
+      await sql`ALTER TABLE ${sql.ref(table)} DROP COLUMN ${sql.ref(change.field!)}`.execute(db);
       break;
     }
 
     case 'change-type': {
       const coercionFn = evolve?.coercions?.[change.field!];
       if (!coercionFn) break;
-      const rows = await sql.raw(`SELECT id, "${change.field}" FROM "${table}"`).execute(db);
+      const rows = await sql`SELECT ${sql.ref('id')}, ${sql.ref(change.field!)} FROM ${sql.ref(table)}`.execute(db);
       for (const row of rows.rows as Record<string, unknown>[]) {
         const newValue = coercionFn(row[change.field!]);
         await sql`UPDATE ${sql.ref(table)} SET ${sql.ref(change.field!)} = ${sql.lit(newValue)} WHERE id = ${sql.lit(row.id)}`.execute(db);

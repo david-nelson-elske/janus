@@ -19,10 +19,10 @@ const registry = new Map<string, HandlerEntry>();
 /**
  * Register a handler in the runtime registry.
  * Returns the key for convenience.
- * Throws if the key is already registered.
+ * Throws if the key is already registered (unless overwrite is true).
  */
-export function handler(key: string, fn: ExecutionHandler, description: string): string {
-  if (registry.has(key)) {
+export function handler(key: string, fn: ExecutionHandler, description: string, overwrite = false): string {
+  if (registry.has(key) && !overwrite) {
     throw new Error(`Handler '${key}' is already registered`);
   }
   registry.set(key, Object.freeze({ fn, description }));
@@ -71,6 +71,7 @@ export const FRAMEWORK_HANDLERS: ReadonlyArray<{ key: string; description: strin
   { key: 'dispatch-adapter', description: 'Dispatch to entity:operation (subscription adapter)' },
   { key: 'http-receive', description: 'Parse HTTP request into dispatch input' },
   { key: 'http-identity', description: 'Resolve caller identity from HTTP request' },
+  { key: 'identity-provision', description: 'Lookup/create local identity record from OIDC subject' },
   { key: 'http-respond', description: 'Shape dispatch result into HTTP response' },
   { key: 'agent-receive', description: 'Parse agent request into dispatch input' },
   { key: 'agent-identity', description: 'Resolve agent identity from request' },

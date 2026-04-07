@@ -54,10 +54,22 @@ const sqliteDialect: DialectOps = {
 
   applyFtsFilter(q, tbl, search) {
     const ftsTbl = `${tbl}_fts`;
+    // Sanitize FTS5 search input to prevent operator injection.
+    // Strategy: quote each whitespace-separated token individually.
+    // Preserve trailing * for prefix queries (safe in FTS5).
+    // Strip other FTS5 operators (AND, OR, NOT, column: syntax, ^, NEAR).
+    const raw = String(search);
+    const tokens = raw.split(/\s+/).filter(Boolean).map((token) => {
+      const hasSuffix = token.endsWith('*');
+      const base = hasSuffix ? token.slice(0, -1) : token;
+      const escaped = `"${base.replace(/"/g, '""')}"`;
+      return hasSuffix ? `${escaped}*` : escaped;
+    });
+    const sanitized = tokens.join(' ');
     return q.where(
       'rowid',
       'in',
-      sql`(SELECT rowid FROM "${sql.raw(ftsTbl)}" WHERE "${sql.raw(ftsTbl)}" MATCH ${search})`,
+      sql`(SELECT rowid FROM "${sql.raw(ftsTbl)}" WHERE "${sql.raw(ftsTbl)}" MATCH ${sanitized})`,
     );
   },
 };

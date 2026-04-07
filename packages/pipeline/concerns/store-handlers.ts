@@ -80,6 +80,22 @@ export const storeUpdate: ExecutionHandler = async (ctx) => {
       retryable: false,
     });
   }
+
+  // Ownership check: verify the target record belongs to the caller
+  const entity = ctx.registry.entity(ctx.entity);
+  if (entity?.owned && !ctx.identity.roles.includes('admin') && ctx.identity.id !== 'system') {
+    const existing = await ctx.store.read(ctx.entity, { id: id as string });
+    if (!isReadPage(existing)) {
+      const rec = existing as EntityRecord;
+      if (rec.createdBy !== ctx.identity.id) {
+        throw Object.assign(new Error('Access denied: record belongs to another user'), {
+          kind: 'auth-error',
+          retryable: false,
+        });
+      }
+    }
+  }
+
   const record = await ctx.store.update(ctx.entity, id as string, {
     ...patch,
     updatedBy: ctx.identity.id,
@@ -87,7 +103,6 @@ export const storeUpdate: ExecutionHandler = async (ctx) => {
   ctx.result = { kind: 'record', record };
 
   // ── Transition effects (ADR 01d) ──────────────────────────────
-  const entity = ctx.registry.entity(ctx.entity);
   if (entity && ctx.before && ctx._dispatch) {
     for (const { field } of entity.lifecycles) {
       const oldState = ctx.before[field] as string | undefined;
@@ -126,6 +141,18 @@ export const storeDelete: ExecutionHandler = async (ctx) => {
     }
   }
 
+  // Ownership check: verify the target record belongs to the caller
+  const entity = ctx.registry.entity(ctx.entity);
+  if (entity?.owned && !ctx.identity.roles.includes('admin') && ctx.identity.id !== 'system') {
+    const target = ctx.before;
+    if (target && target.createdBy !== ctx.identity.id) {
+      throw Object.assign(new Error('Access denied: record belongs to another user'), {
+        kind: 'auth-error',
+        retryable: false,
+      });
+    }
+  }
+
   // ── Wiring effects on delete (ADR 01d) ────────────────────────
   const effectEdges = ctx.registry.wiring.reverseEffects(ctx.entity);
 
@@ -148,10 +175,11 @@ export const storeDelete: ExecutionHandler = async (ctx) => {
   await ctx.store.delete(ctx.entity, id);
 
   // 3. Cascade — delete referencing records via re-entrant dispatch
+  //    Propagate caller identity so ownership checks apply on child records.
   for (const edge of effectEdges) {
     if (edge.effects?.deleted === 'cascade') {
       await dispatchToReferencing(ctx, edge, id, 'delete',
-        (r) => ({ id: r.id }), 'Cascade delete of');
+        (r) => ({ id: r.id }), 'Cascade delete of', ctx.identity);
     }
   }
 

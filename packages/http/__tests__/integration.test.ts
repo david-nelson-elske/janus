@@ -244,3 +244,93 @@ describe('createApp', () => {
     expect(res.status).toBe(201);
   });
 });
+
+// ── http config (surface collapse) ──────────────────────────────
+
+describe('createApp with http config', () => {
+  test('http config creates working routes without apiSurface()', async () => {
+    clearRegistry();
+
+    const note = define('note', {
+      schema: { title: Str({ required: true }) },
+      storage: Persistent(),
+    });
+    const noteP = participate(note, {});
+
+    const httpApp = await createApp({
+      declarations: [note, noteP],
+      http: { basePath: '/api' },
+      apiKeys: { 'test-key': { id: 'user1', roles: ['admin'] } },
+    });
+
+    const res = await httpApp.fetch(
+      new Request('http://localhost/api/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': 'test-key' },
+        body: JSON.stringify({ title: 'Via http config' }),
+      }),
+    );
+    expect(res.status).toBe(201);
+
+    const json = await res.json();
+    expect(json.ok).toBe(true);
+    expect(json.data.title).toBe('Via http config');
+    expect(json.data.createdBy).toBe('user1');
+
+    await httpApp.shutdown();
+  });
+
+  test('http config defaults basePath to /api', async () => {
+    clearRegistry();
+
+    const note = define('note', {
+      schema: { title: Str({ required: true }) },
+      storage: Persistent(),
+    });
+    const noteP = participate(note, {});
+
+    const httpApp = await createApp({
+      declarations: [note, noteP],
+      http: {},
+    });
+
+    const res = await httpApp.fetch(
+      new Request('http://localhost/api/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Default basePath' }),
+      }),
+    );
+    expect(res.status).toBe(201);
+
+    await httpApp.shutdown();
+  });
+
+  test('http config works without apiKeys', async () => {
+    clearRegistry();
+
+    const note = define('note', {
+      schema: { title: Str({ required: true }) },
+      storage: Persistent(),
+    });
+    const noteP = participate(note, {});
+
+    const httpApp = await createApp({
+      declarations: [note, noteP],
+      http: {},
+    });
+
+    const res = await httpApp.fetch(
+      new Request('http://localhost/api/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'No keys' }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.data.createdBy).toBe('anonymous');
+
+    await httpApp.shutdown();
+  });
+});

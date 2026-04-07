@@ -9,7 +9,7 @@ import {
 import type { CompileResult } from '@janus/core';
 import { Str, Int, Lifecycle, Persistent, Sensitive } from '@janus/vocabulary';
 import { registerHandlers, frameworkEntities, frameworkParticipations } from '@janus/pipeline';
-import { agentSurface, deriveInteractionLevels, discoverTools, buildAgentContext } from '..';
+import { agentSurface, deriveInteractionLevels, discoverTools, discoverNavigationTools, buildAgentContext } from '..';
 import type { SessionRecord } from '..';
 
 // ── Shared setup ───────────────────────────────────────────────
@@ -211,6 +211,47 @@ describe('discoverTools', () => {
   test('result is frozen', () => {
     const tools = discoverTools(registry, initiatorName);
     expect(Object.isFrozen(tools)).toBe(true);
+  });
+});
+
+// ── discoverNavigationTools ───────────────────────────────────
+
+describe('discoverNavigationTools', () => {
+  test('returns list navigation for entity with list binding', () => {
+    const navTools = discoverNavigationTools(registry);
+    const noteList = navTools.find((n) => n.entity === 'note' && n.view === 'list');
+    expect(noteList).toBeDefined();
+    expect(noteList!.path).toBe('/notes');
+    expect(noteList!.label).toBe('Note list');
+    expect(noteList!.requiresId).toBe(false);
+  });
+
+  test('returns detail navigation for entity with detail binding', () => {
+    const navTools = discoverNavigationTools(registry);
+    const noteDetail = navTools.find((n) => n.entity === 'note' && n.view === 'detail');
+    expect(noteDetail).toBeDefined();
+    expect(noteDetail!.path).toBe('/notes/:id');
+    expect(noteDetail!.label).toBe('Note detail');
+    expect(noteDetail!.requiresId).toBe(true);
+  });
+
+  test('skips entities with no bindings', () => {
+    const navTools = discoverNavigationTools(registry);
+    const secretNav = navTools.filter((n) => n.entity === 'secret');
+    expect(secretNav).toHaveLength(0);
+  });
+
+  test('skips framework-origin entities', () => {
+    const navTools = discoverNavigationTools(registry);
+    const frameworkNav = navTools.filter(
+      (n) => n.entity === 'execution_log' || n.entity === 'agent_session',
+    );
+    expect(frameworkNav).toHaveLength(0);
+  });
+
+  test('result is frozen', () => {
+    const navTools = discoverNavigationTools(registry);
+    expect(Object.isFrozen(navTools)).toBe(true);
   });
 });
 

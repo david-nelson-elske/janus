@@ -14,6 +14,8 @@ import type { ConnectionManager } from '@janus/pipeline';
 export interface SseHandlerConfig {
   readonly connectionManager: ConnectionManager;
   readonly heartbeatMs?: number;
+  /** Resolve userId from request. Falls back to 'anonymous' if not provided or returns null. */
+  readonly resolveUserId?: (req: Request) => Promise<string | null>;
 }
 
 /**
@@ -47,6 +49,16 @@ export function createSseHandler(config: SseHandlerConfig) {
     const connectionId = crypto.randomUUID();
     const now = Date.now();
 
+    // Resolve identity from request
+    let userId = 'anonymous';
+    if (config.resolveUserId) {
+      try {
+        userId = (await config.resolveUserId(c.req.raw)) ?? 'anonymous';
+      } catch {
+        // Fall back to anonymous on resolution failure
+      }
+    }
+
     let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
 
     const stream = new ReadableStream<Uint8Array>({
@@ -72,7 +84,7 @@ export function createSseHandler(config: SseHandlerConfig) {
         // Register connection
         config.connectionManager.add({
           id: connectionId,
-          userId: 'anonymous', // TODO: resolve from identity
+          userId,
           controller: stringProxy,
           subscriptions,
           connectedAt: now,

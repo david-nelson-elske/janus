@@ -5,10 +5,11 @@
  * These are dispatched by store-handlers after the core CRUD operation.
  */
 
-import type { ExecutionHandler, EntityRecord, ReadPage, WiringEdge } from '@janus/core';
+import type { ExecutionHandler, Identity, EntityRecord, ReadPage, WiringEdge } from '@janus/core';
 import { SYSTEM } from '@janus/core';
 
-/** Dispatch an operation to all records referencing `entityId` via `edge`, with pagination. */
+/** Dispatch an operation to all records referencing `entityId` via `edge`, with pagination.
+ *  Propagates the provided identity (typically the original caller) for ownership checks. */
 export async function dispatchToReferencing(
   ctx: Parameters<ExecutionHandler>[0],
   edge: WiringEdge,
@@ -16,8 +17,10 @@ export async function dispatchToReferencing(
   operation: string,
   buildInput: (record: EntityRecord) => Record<string, unknown>,
   errorLabel: string,
+  identity?: Identity,
 ): Promise<void> {
   if (!ctx._dispatch) return;
+  const dispatchIdentity = identity ?? SYSTEM;
   let offset = 0;
   const limit = 200;
   // biome-ignore lint/correctness/noConstantCondition: pagination loop
@@ -26,7 +29,7 @@ export async function dispatchToReferencing(
       where: { [edge.fromField]: entityId }, limit, offset,
     }) as ReadPage;
     for (const record of page.records) {
-      const resp = await ctx._dispatch(edge.from, operation, buildInput(record), SYSTEM);
+      const resp = await ctx._dispatch(edge.from, operation, buildInput(record), dispatchIdentity);
       if (!resp.ok) {
         throw Object.assign(
           new Error(`${errorLabel} '${edge.from}' ${record.id} failed: ${resp.error?.message ?? 'unknown error'}`),
@@ -39,7 +42,10 @@ export async function dispatchToReferencing(
   }
 }
 
-/** Apply a single transition effect from an inbound edge. */
+/** Apply a single transition effect from an inbound edge.
+ *  Transition effects dispatch as SYSTEM — they are framework-initiated side effects,
+ *  not user-initiated operations. This is intentional: a lifecycle transition on entity A
+ *  may cascade to entity B that the original caller doesn't directly own. */
 export async function applyTransitionEffect(
   ctx: Parameters<ExecutionHandler>[0],
   edge: WiringEdge,

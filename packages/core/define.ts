@@ -24,7 +24,7 @@ import type {
   TransitionTarget,
   WiringFieldEntry,
 } from './types';
-import { ENTITY_NAME, MAX_ENTITY_NAME_LENGTH } from './types';
+import { ENTITY_NAME, FIELD_NAME, MAX_ENTITY_NAME_LENGTH } from './types';
 
 // ── Validation ──────────────────────────────────────────────────
 
@@ -39,6 +39,11 @@ function validateSchema(schema: Record<string, unknown>): void {
       throw new Error(
         `Reserved field name '${field}' cannot be used in entity schema. ` +
         `Framework-managed fields: ${[...RESERVED_FIELDS].join(', ')}`,
+      );
+    }
+    if (!FIELD_NAME.test(field)) {
+      throw new Error(
+        `Invalid field name '${field}': must match ${FIELD_NAME} (lowercase alphanumeric + underscores)`,
       );
     }
   }

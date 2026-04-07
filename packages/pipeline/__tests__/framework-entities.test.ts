@@ -14,6 +14,8 @@ import {
   connectorBinding,
   asset,
   template,
+  oidcProvider,
+  session,
 } from '..';
 import { clearRegistry } from '@janus/core';
 
@@ -22,12 +24,12 @@ afterEach(() => {
 });
 
 describe('frameworkEntities', () => {
-  test('has 5 entities', () => {
-    expect(frameworkEntities).toHaveLength(5);
+  test('has 7 entities', () => {
+    expect(frameworkEntities).toHaveLength(7);
   });
 
-  test('has 5 participations', () => {
-    expect(frameworkParticipations).toHaveLength(5);
+  test('has 7 participations', () => {
+    expect(frameworkParticipations).toHaveLength(7);
   });
 });
 
@@ -114,6 +116,81 @@ describe('template', () => {
 
   test('origin is framework', () => {
     expect(template.record.origin).toBe('framework');
+  });
+});
+
+describe('oidc_provider', () => {
+  test('name is oidc_provider', () => {
+    expect(oidcProvider.record.name).toBe('oidc_provider');
+  });
+
+  test('storage is Singleton', () => {
+    expect(oidcProvider.record.storage.mode).toBe('singleton');
+  });
+
+  test('origin is framework', () => {
+    expect(oidcProvider.record.origin).toBe('framework');
+  });
+
+  test('has OIDC config fields', () => {
+    const schema = oidcProvider.record.schema;
+    expect(schema.issuer).toBeDefined();
+    expect(schema.client_id).toBeDefined();
+    expect(schema.client_secret).toBeDefined();
+    expect(schema.roles_claim).toBeDefined();
+    expect(schema.scope_claim).toBeDefined();
+    expect(schema.role_map).toBeDefined();
+    expect(schema.identity_entity).toBeDefined();
+    expect(schema.subject_field).toBeDefined();
+  });
+
+  test('operations are read and update only (singleton)', () => {
+    expect(oidcProvider.record.operations).toContain('read');
+    expect(oidcProvider.record.operations).toContain('update');
+    expect(oidcProvider.record.operations).not.toContain('create');
+    expect(oidcProvider.record.operations).not.toContain('delete');
+  });
+});
+
+describe('session', () => {
+  test('name is session', () => {
+    expect(session.record.name).toBe('session');
+  });
+
+  test('storage is Persistent', () => {
+    expect(session.record.storage.mode).toBe('persistent');
+  });
+
+  test('origin is framework', () => {
+    expect(session.record.origin).toBe('framework');
+  });
+
+  test('has auth session fields', () => {
+    const schema = session.record.schema;
+    expect(schema.subject).toBeDefined();
+    expect(schema.identity_id).toBeDefined();
+    expect(schema.token).toBeDefined();
+    expect(schema.refresh_token).toBeDefined();
+    expect(schema.provider).toBeDefined();
+    expect(schema.status).toBeDefined();
+  });
+
+  test('token field is Token type', () => {
+    expect(session.record.schema.token.kind).toBe('token');
+  });
+
+  test('status field has lifecycle transitions', () => {
+    const lifecycles = session.record.lifecycles;
+    expect(lifecycles.length).toBeGreaterThan(0);
+    const statusLifecycle = lifecycles.find((l: any) => l.field === 'status');
+    expect(statusLifecycle).toBeDefined();
+  });
+
+  test('has index on subject', () => {
+    const indexes = session.record.indexes;
+    expect(indexes).toBeDefined();
+    const subjectIdx = indexes!.find((idx: any) => idx.fields.includes('subject'));
+    expect(subjectIdx).toBeDefined();
   });
 });
 

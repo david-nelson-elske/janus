@@ -22,7 +22,7 @@ export function createRateLimitCheck(store: RateLimitStore): ExecutionHandler {
     const config = ctx.config as unknown as RateLimitHandlerConfig;
     if (!config || !config.max || !config.window) return;
 
-    const key = `${ctx.entity}:${ctx.identity.id}`;
+    const key = `${ctx.entity}:${ctx.operation}:${ctx.identity.id}`;
     const result = store.check(key, config.max, config.window);
 
     if (result.blocked) {

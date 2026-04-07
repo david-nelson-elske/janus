@@ -27,7 +27,7 @@ export type { CronFields } from './cron';
 
 // ── Framework entities ──────────────────────────────────────────
 
-export { frameworkEntities, frameworkParticipations, executionLog, executionLogParticipation, agentSession, agentSessionParticipation, connectorBinding, connectorBindingParticipation, asset, assetParticipation, template, templateParticipation } from './framework-entities';
+export { frameworkEntities, frameworkParticipations, executionLog, executionLogParticipation, agentSession, agentSessionParticipation, connectorBinding, connectorBindingParticipation, asset, assetParticipation, template, templateParticipation, oidcProvider, oidcProviderParticipation, session, sessionParticipation } from './framework-entities';
 
 // ── Infrastructure ──────────────────────────────────────────────
 
@@ -50,4 +50,6 @@ export { generateToken, generateQrCode, parseDuration } from './concerns/credent
 // ── Types consumed by http/surface.ts ───────────────────────────
 
 export type { HttpIdentityConfig, OidcConfig } from './concerns/http-identity';
+export type { IdentityProvisionConfig } from './concerns/identity-provision';
+export { clearProvisionCache } from './concerns/identity-provision';
 export type { HttpResponse } from './concerns/http-respond';

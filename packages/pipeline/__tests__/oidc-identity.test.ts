@@ -94,7 +94,7 @@ async function signToken(
 
 /** Bootstrap a dispatch runtime with http-identity configured for OIDC. */
 async function bootstrapWithOidc(config: {
-  oidc?: { issuer: string; clientId: string; rolesClaim?: string; scopesClaim?: string };
+  oidc?: { issuer: string; clientId: string; rolesClaim?: string; scopesClaim?: string; roleMap?: Record<string, string> };
   keys?: Record<string, Identity>;
 }) {
   registerHandlers();
@@ -276,6 +276,109 @@ describe('OIDC identity resolution', () => {
     });
     expect(result.ok).toBe(true);
     expect((result.data as Record<string, unknown>).createdBy).toBe('anonymous');
+  });
+});
+
+// ── roleMap tests ──────────────────────────────────────────────
+
+describe('roleMap', () => {
+  test('maps OIDC roles to framework policy groups', async () => {
+    clearRegistry();
+    registerHandlers();
+
+    const note = define('note', {
+      schema: { title: Str({ required: true }) },
+      storage: Persistent(),
+    });
+    const noteP = participate(note, {
+      policy: {
+        rules: [{ role: 'board', operations: '*' }],
+      },
+    });
+
+    const initiator = {
+      name: 'api-surface',
+      origin: 'consumer' as const,
+      participations: [
+        { source: 'api-surface', handler: 'http-receive', order: 5, transactional: false, config: { basePath: '/api' } },
+        { source: 'api-surface', handler: 'http-identity', order: 6, transactional: false, config: {
+          oidc: {
+            issuer: TEST_ISSUER,
+            clientId: TEST_CLIENT_ID,
+            roleMap: { 'board-member': 'board' },
+          },
+        }},
+        { source: 'api-surface', handler: 'http-respond', order: 80, transactional: false, config: {} },
+      ],
+    };
+
+    const registry = compile(
+      [note, noteP, ...frameworkEntities, ...frameworkParticipations],
+      [initiator],
+    );
+
+    const memAdapter = createMemoryAdapter();
+    const store = createEntityStore({
+      routing: registry.persistRouting,
+      adapters: { relational: memAdapter, memory: memAdapter },
+    });
+    await store.initialize();
+
+    const broker = createBroker();
+    const runtime = createDispatchRuntime({ registry, store, broker });
+
+    // JWT has 'board-member' role, roleMap translates it to 'board'
+    const token = await signToken({
+      sub: 'user-1',
+      realm_access: { roles: ['board-member'] },
+    });
+
+    const result = await httpDispatch(runtime, 'note', 'create', { title: 'Mapped role' }, {
+      authorization: `Bearer ${token}`,
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  test('unmapped roles pass through unchanged', async () => {
+    const { runtime } = await bootstrapWithOidc({
+      oidc: {
+        issuer: TEST_ISSUER,
+        clientId: TEST_CLIENT_ID,
+        roleMap: { 'other-role': 'mapped' },
+      },
+    });
+
+    // 'admin' is not in roleMap, so it passes through as 'admin'
+    const token = await signToken({
+      sub: 'user-1',
+      realm_access: { roles: ['admin'] },
+    });
+
+    const result = await httpDispatch(runtime, 'note', 'create', { title: 'Unmapped' }, {
+      authorization: `Bearer ${token}`,
+    });
+    expect(result.ok).toBe(true);
+    expect((result.data as Record<string, unknown>).createdBy).toBe('user-1');
+  });
+
+  test('empty roleMap has no effect', async () => {
+    const { runtime } = await bootstrapWithOidc({
+      oidc: {
+        issuer: TEST_ISSUER,
+        clientId: TEST_CLIENT_ID,
+        roleMap: {},
+      },
+    });
+
+    const token = await signToken({
+      sub: 'user-1',
+      realm_access: { roles: ['editor'] },
+    });
+
+    const result = await httpDispatch(runtime, 'note', 'create', { title: 'Empty map' }, {
+      authorization: `Bearer ${token}`,
+    });
+    expect(result.ok).toBe(true);
   });
 });
 

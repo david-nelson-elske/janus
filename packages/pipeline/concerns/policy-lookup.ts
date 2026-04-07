@@ -10,6 +10,8 @@
 import type { ExecutionHandler } from '@janus/core';
 import { ANONYMOUS } from '@janus/core';
 
+const _warnedEntities = new Set<string>();
+
 interface PolicyRule {
   readonly role: string;
   readonly operations: '*' | readonly string[];
@@ -23,7 +25,14 @@ interface PolicyConfig {
 
 export const policyLookup: ExecutionHandler = async (ctx) => {
   const config = ctx.config as unknown as PolicyConfig;
-  if (!config || !config.rules) return; // no policy configured — allow all
+  if (!config || !config.rules) {
+    // No policy configured — allow all. Log once per entity to flag misconfiguration.
+    if (!_warnedEntities.has(ctx.entity)) {
+      _warnedEntities.add(ctx.entity);
+      console.warn(`[policy-lookup] No policy configured for '${ctx.entity}' — all operations allowed`);
+    }
+    return;
+  }
 
   const identity = ctx.identity;
   const operation = ctx.operation;

@@ -76,3 +76,13 @@ export interface SessionBindingEntry {
   readonly view: string;
   readonly fieldAccess: Readonly<Record<string, AgentInteractionLevel>>;
 }
+
+// ── Navigation tool discovery ─────────────────────────────────
+
+export interface NavigationDescriptor {
+  readonly entity: string;
+  readonly view: string;
+  readonly path: string;
+  readonly label: string;
+  readonly requiresId: boolean;
+}

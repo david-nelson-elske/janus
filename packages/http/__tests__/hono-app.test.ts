@@ -289,7 +289,8 @@ describe('GET /verify/:code', () => {
     expect(verified.ok).toBe(true);
     expect(verified.entity).toBe('ticket');
     expect(verified.field).toBe('code');
-    expect(verified.record.title).toBe('VIP Pass');
+    // Security: full record is no longer exposed in verify response
+    expect(verified.record).toBeUndefined();
 
     await app.shutdown();
     clearRegistry();
@@ -349,12 +350,12 @@ describe('GET /verify/:code', () => {
     const created = await createRes.json();
     const code = created.data.code;
 
-    // Verify — should be expired
+    // Verify — should return 404 (unified error to prevent expired/not-found enumeration)
     const verifyRes = await get(app.fetch.bind(app), `/api/verify/${code}`);
-    expect(verifyRes.status).toBe(410);
+    expect(verifyRes.status).toBe(404);
     const body = await verifyRes.json();
     expect(body.ok).toBe(false);
-    expect(body.error.kind).toBe('expired');
+    expect(body.error.kind).toBe('not-found');
 
     await app.shutdown();
     clearRegistry();

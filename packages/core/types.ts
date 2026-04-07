@@ -33,29 +33,26 @@ export const WRITE_OPERATIONS: readonly Operation[] = Object.freeze([
   'delete',
 ]);
 
-// ── Event Descriptors (4 kinds, replaces 11-kind union) ─────────
+// ── Event Descriptors (re-exported from vocabulary) ─────────────
 
-export type EventDescriptor =
-  | { readonly kind: 'created' }
-  | { readonly kind: 'updated' }
-  | { readonly kind: 'deleted' }
-  | { readonly kind: 'acted'; readonly action: string };
+export type {
+  EventDescriptor,
+} from '@janus/vocabulary';
 
-export const Created: EventDescriptor = Object.freeze({ kind: 'created' as const });
-export const Updated: EventDescriptor = Object.freeze({ kind: 'updated' as const });
-export const Deleted: EventDescriptor = Object.freeze({ kind: 'deleted' as const });
+export {
+  Created,
+  Updated,
+  Deleted,
+  Acted,
+  Transitioned,
+  isMutationEvent,
+} from '@janus/vocabulary';
 
-export function Acted(action: string): EventDescriptor {
-  return Object.freeze({ kind: 'acted' as const, action });
-}
-
-export function isMutationEvent(e: EventDescriptor): boolean {
-  return e.kind === 'created' || e.kind === 'updated' || e.kind === 'deleted';
-}
+import type { EventDescriptor } from '@janus/vocabulary';
 
 export function isActedEvent(
   e: EventDescriptor,
-): e is EventDescriptor & { kind: 'acted'; action: string } {
+): e is EventDescriptor & { kind: 'acted'; name: string } {
   return e.kind === 'acted';
 }
 
@@ -172,6 +169,7 @@ export function resolveEntityName(entity: string | DefineResult): string {
 // ── Entity name validation ──────────────────────────────────────
 
 export const ENTITY_NAME = /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/;
+export const FIELD_NAME = /^_?[a-zA-Z][a-zA-Z0-9_]*$/;
 export const MAX_ENTITY_NAME_LENGTH = 64;
 
 // ── Asset backend (interface only — implementation in pipeline) ──
