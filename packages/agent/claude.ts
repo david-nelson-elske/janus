@@ -33,10 +33,40 @@ function jsonSchemaType(kind: string): string {
   }
 }
 
-/** Build a JSON Schema input_schema from a ToolDescriptor's fields. */
+/**
+ * Build a JSON Schema input_schema from a ToolDescriptor.
+ *
+ * Operation semantics:
+ *   - create:               no `id`. Field requirements propagated from schema.
+ *   - read:                 optional `id` (single record vs list). Other fields
+ *                           are filter parameters; not required.
+ *   - update / delete /     required `id`. Other fields are optional —
+ *     lifecycle transitions just `id` is enough to perform the operation.
+ *
+ * Without this, an LLM looking at e.g. `contact__update` sees fields like
+ * `name`, `email`, `notes` but no way to specify *which* contact to update,
+ * and erroneously sees entity-level required fields as required for updates.
+ */
 function buildInputSchema(tool: ToolDescriptor): Anthropic.Messages.Tool.InputSchema {
   const properties: Record<string, Record<string, unknown>> = {};
   const required: string[] = [];
+
+  const op = tool.operation;
+  const isCreate = op === 'create';
+  const isRead = op === 'read';
+  // Anything that isn't create/read is a mutating operation that targets a
+  // specific record by id (update, delete, lifecycle transitions).
+  const isMutationById = !isCreate && !isRead;
+
+  if (!isCreate) {
+    properties['id'] = {
+      type: 'string',
+      description: isMutationById
+        ? `The UUID of the ${tool.entity} record to ${op}.`
+        : `Optional. Pass a UUID to fetch a single ${tool.entity} record. Omit (and use other fields as filters) to list records.`,
+    };
+    if (isMutationById) required.push('id');
+  }
 
   for (const field of tool.fields) {
     if (field.interactionLevel === 'aware') continue; // agent can't write to redacted fields
@@ -45,7 +75,9 @@ function buildInputSchema(tool: ToolDescriptor): Anthropic.Messages.Tool.InputSc
       prop.description = `Query operators: ${field.operators.join(', ')}`;
     }
     properties[field.name] = prop;
-    if (field.required) required.push(field.name);
+    // Only propagate entity-schema "required" for create operations.
+    // For update/delete/transitions, only `id` is genuinely required.
+    if (field.required && isCreate) required.push(field.name);
   }
 
   return {
@@ -103,6 +135,21 @@ export interface AgentLoopConfig {
   readonly apiKey?: string;
   /** Max tokens per response. Default: 4096. */
   readonly maxTokens?: number;
+  /**
+   * Additional tools to register alongside auto-discovered entity tools.
+   * Use this for Anthropic server tools (e.g. web_search) or custom client-side
+   * tools handled via extraToolHandlers.
+   */
+  readonly extraTools?: readonly Anthropic.Messages.ToolUnion[];
+  /**
+   * Handlers for custom (non-entity) tool names. The key is the tool name
+   * (matching the `name` field of the corresponding extraTools entry). The
+   * handler is called with the parsed tool input and must return the result
+   * payload that will be JSON-stringified and returned to Claude. Anthropic
+   * server tools (web_search, etc.) execute server-side and do NOT need a
+   * handler here.
+   */
+  readonly extraToolHandlers?: Readonly<Record<string, (input: unknown) => Promise<unknown> | unknown>>;
   /** Called when a tool is invoked. For logging/debugging. */
   readonly onToolCall?: (entity: string, operation: string, input: unknown) => void;
   /** Called when a tool returns. For logging/debugging. */
@@ -173,13 +220,43 @@ export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
 
   // Discover tools and convert to Claude format
   const discoveredTools = discoverTools(config.registry, initiator);
-  const claudeTools = toClaudeTools(discoveredTools);
+  const entityClaudeTools = toClaudeTools(discoveredTools);
+  const claudeTools: Anthropic.Messages.ToolUnion[] = [
+    ...entityClaudeTools,
+    ...(config.extraTools ?? []),
+  ];
+  const extraToolHandlers = config.extraToolHandlers ?? {};
   const systemPrompt = config.systemPrompt ?? buildSystemPrompt(discoveredTools);
 
   const client = new Anthropic({ apiKey: config.apiKey });
   const messages: Anthropic.Messages.MessageParam[] = [];
 
   async function handleToolUse(block: Anthropic.Messages.ToolUseBlock): Promise<Anthropic.Messages.ToolResultBlockParam> {
+    // Custom (non-entity) tool — route to extraToolHandlers if registered.
+    // Note: Anthropic server tools (web_search, etc.) execute server-side and
+    // never reach this handler — they appear as separate content blocks.
+    if (block.name in extraToolHandlers) {
+      config.onToolCall?.('__custom__', block.name, block.input);
+      try {
+        const result = await extraToolHandlers[block.name](block.input);
+        config.onToolResult?.('__custom__', block.name, { ok: true, data: result });
+        return {
+          type: 'tool_result',
+          tool_use_id: block.id,
+          content: JSON.stringify(result),
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        config.onToolResult?.('__custom__', block.name, { ok: false, error: { kind: 'handler-error', message } });
+        return {
+          type: 'tool_result',
+          tool_use_id: block.id,
+          is_error: true,
+          content: JSON.stringify({ ok: false, error: { kind: 'handler-error', message } }),
+        };
+      }
+    }
+
     const { entity, operation } = parseToolName(block.name);
     const parameters = block.input as Record<string, unknown>;
 
