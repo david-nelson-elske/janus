@@ -123,8 +123,9 @@ async function dispatchAndFormat(
   input: Record<string, unknown>,
   json: boolean,
   formatOk: (data: unknown) => string,
+  identity?: CLIIdentity,
 ): Promise<string> {
-  const res = await runtime.dispatch(initiator, entity, operation, input);
+  const res = await runtime.dispatch(initiator, entity, operation, input, identity as any);
   if (!res.ok) return json ? formatJson(res) : `Error: ${res.error?.message}`;
   return json ? formatJson(res.data) : formatOk(res.data);
 }
@@ -135,6 +136,8 @@ export async function executeCommand(
   parsed: ParsedArgs,
   runtime?: DispatchRuntime,
   registry?: CompileResult,
+  initiator = 'system',
+  identity?: CLIIdentity,
 ): Promise<string> {
   switch (parsed.command) {
     case 'entities':
@@ -144,15 +147,15 @@ export async function executeCommand(
     case 'fields':
       return cmdFields(parsed.entity, registry!, parsed.json);
     case 'read':
-      return cmdRead(parsed, runtime!, parsed.json);
+      return cmdRead(parsed, runtime!, parsed.json, initiator, identity);
     case 'create':
-      return cmdCreate(parsed, runtime!, parsed.json);
+      return cmdCreate(parsed, runtime!, parsed.json, initiator, identity);
     case 'update':
-      return cmdUpdate(parsed, runtime!, parsed.json);
+      return cmdUpdate(parsed, runtime!, parsed.json, initiator, identity);
     case 'delete':
-      return cmdDelete(parsed, runtime!, parsed.json);
+      return cmdDelete(parsed, runtime!, parsed.json, initiator, identity);
     case 'dispatch':
-      return cmdDispatch(parsed, runtime!, parsed.json);
+      return cmdDispatch(parsed, runtime!, parsed.json, initiator, identity);
     case 'help':
     default:
       return cmdHelp();
@@ -197,7 +200,7 @@ function cmdFields(entity: string | undefined, registry: CompileResult, json: bo
   return lines.join('\n');
 }
 
-async function cmdRead(parsed: ParsedArgs, runtime: DispatchRuntime, json: boolean): Promise<string> {
+async function cmdRead(parsed: ParsedArgs, runtime: DispatchRuntime, json: boolean, initiator = 'system', identity?: CLIIdentity): Promise<string> {
   if (!parsed.entity) return 'Usage: janus read <entity> [--id <id>] [--where key=val] [--search term]';
 
   const input: Record<string, unknown> = {};
@@ -205,7 +208,7 @@ async function cmdRead(parsed: ParsedArgs, runtime: DispatchRuntime, json: boole
   if (parsed.flags.where) input.where = parseWhere(parsed.flags.where);
   if (parsed.flags.search) input.search = parsed.flags.search;
 
-  return dispatchAndFormat(runtime, 'system', parsed.entity, 'read', input, json, (data) => {
+  return dispatchAndFormat(runtime, initiator, parsed.entity, 'read', input, json, (data) => {
     const record = data as Record<string, unknown>;
     if (record && 'records' in record) {
       const page = record as { records: Record<string, unknown>[]; total?: number };
@@ -213,39 +216,42 @@ async function cmdRead(parsed: ParsedArgs, runtime: DispatchRuntime, json: boole
       return formatTable(page.records) + suffix;
     }
     return formatRecord(record);
-  });
+  }, identity);
 }
 
-async function cmdCreate(parsed: ParsedArgs, runtime: DispatchRuntime, json: boolean): Promise<string> {
+async function cmdCreate(parsed: ParsedArgs, runtime: DispatchRuntime, json: boolean, initiator = 'system', identity?: CLIIdentity): Promise<string> {
   if (!parsed.entity) return 'Usage: janus create <entity> --field value ...';
 
   return dispatchAndFormat(
-    runtime, 'system', parsed.entity, 'create', flagsToInput(parsed.flags), json,
+    runtime, initiator, parsed.entity, 'create', flagsToInput(parsed.flags), json,
     (data) => `Created:\n${formatRecord(data as Record<string, unknown>)}`,
+    identity,
   );
 }
 
-async function cmdUpdate(parsed: ParsedArgs, runtime: DispatchRuntime, json: boolean): Promise<string> {
+async function cmdUpdate(parsed: ParsedArgs, runtime: DispatchRuntime, json: boolean, initiator = 'system', identity?: CLIIdentity): Promise<string> {
   if (!parsed.entity) return 'Usage: janus update <entity> --id <id> --field value ...';
   if (!parsed.flags.id) return 'Error: --id is required for update';
 
   return dispatchAndFormat(
-    runtime, 'system', parsed.entity, 'update', flagsToInput(parsed.flags), json,
+    runtime, initiator, parsed.entity, 'update', flagsToInput(parsed.flags), json,
     (data) => `Updated:\n${formatRecord(data as Record<string, unknown>)}`,
+    identity,
   );
 }
 
-async function cmdDelete(parsed: ParsedArgs, runtime: DispatchRuntime, json: boolean): Promise<string> {
+async function cmdDelete(parsed: ParsedArgs, runtime: DispatchRuntime, json: boolean, initiator = 'system', identity?: CLIIdentity): Promise<string> {
   if (!parsed.entity) return 'Usage: janus delete <entity> --id <id>';
   if (!parsed.flags.id) return 'Error: --id is required for delete';
 
   return dispatchAndFormat(
-    runtime, 'system', parsed.entity, 'delete', { id: parsed.flags.id }, json,
+    runtime, initiator, parsed.entity, 'delete', { id: parsed.flags.id }, json,
     () => `Deleted ${parsed.entity} ${parsed.flags.id}`,
+    identity,
   );
 }
 
-async function cmdDispatch(parsed: ParsedArgs, runtime: DispatchRuntime, json: boolean): Promise<string> {
+async function cmdDispatch(parsed: ParsedArgs, runtime: DispatchRuntime, json: boolean, initiator = 'system', identity?: CLIIdentity): Promise<string> {
   if (!parsed.entity) return 'Usage: janus dispatch <entity>:<operation> [--id <id>] [--input \'{}\']]';
 
   const operation = parsed.operation;
@@ -261,7 +267,7 @@ async function cmdDispatch(parsed: ParsedArgs, runtime: DispatchRuntime, json: b
   }
   Object.assign(input, flagsToInput(parsed.flags, new Set(['input'])));
 
-  return dispatchAndFormat(runtime, 'system', parsed.entity, operation, input, json, (data) => {
+  return dispatchAndFormat(runtime, initiator, parsed.entity, operation, input, json, (data) => {
     if (data && typeof data === 'object') {
       if ('records' in data) {
         return formatTable((data as { records: Record<string, unknown>[] }).records);
@@ -269,11 +275,11 @@ async function cmdDispatch(parsed: ParsedArgs, runtime: DispatchRuntime, json: b
       return formatRecord(data as Record<string, unknown>);
     }
     return 'OK';
-  });
+  }, identity);
 }
 
-function cmdHelp(): string {
-  return `janus — Janus development tracker CLI
+function cmdHelp(appName = 'janus', extraHelp = ''): string {
+  return `${appName} — entity CLI
 
 Commands:
   entities                                List all entities
@@ -287,5 +293,61 @@ Commands:
 
 Flags:
   --json                                  Output as JSON (for agents)
-  --where key=val                         Filter (for read)`;
+  --where key=val                         Filter (for read)${extraHelp}`;
+}
+
+// ── Reusable CLI runner ─────────────────────────────────────────
+
+export interface CLIIdentity {
+  readonly id: string;
+  readonly roles: readonly string[];
+}
+
+export interface CLIConfig {
+  /** Factory that boots the app. Called for all commands except help. */
+  boot: () => Promise<{ runtime: DispatchRuntime; registry: CompileResult; shutdown?: () => Promise<void> }>;
+  /** App name shown in help text. */
+  name?: string;
+  /** Initiator name for dispatch calls. Default: 'system'. */
+  initiator?: string;
+  /** Identity passed to dispatch for policy evaluation. Default: { id: 'system', roles: ['system'] }. */
+  identity?: CLIIdentity;
+  /** Extra commands beyond the built-in CRUD set. */
+  extraCommands?: Record<string, (parsed: ParsedArgs, runtime: DispatchRuntime, registry: CompileResult) => Promise<string>>;
+  /** Extra help text appended to the built-in help. */
+  extraHelp?: string;
+}
+
+/**
+ * Run the CLI with the given configuration. Call from your entry point:
+ *
+ *   runCLI({ boot: () => createApp({ declarations, store }), name: 'myapp' });
+ */
+export async function runCLI(config: CLIConfig): Promise<void> {
+  const parsed = parseArgs(process.argv);
+
+  try {
+    // Check extra commands first
+    if (config.extraCommands?.[parsed.command]) {
+      const app = await config.boot();
+      const output = await config.extraCommands[parsed.command](parsed, app.runtime, app.registry);
+      console.log(output);
+      await app.shutdown?.();
+      process.exit(0);
+    }
+
+    if (parsed.command === 'help') {
+      console.log(cmdHelp(config.name, config.extraHelp));
+      process.exit(0);
+    }
+
+    const app = await config.boot();
+    const output = await executeCommand(parsed, app.runtime, app.registry, config.initiator, config.identity);
+    console.log(output);
+    await app.shutdown?.();
+    process.exit(0);
+  } catch (err) {
+    console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
 }

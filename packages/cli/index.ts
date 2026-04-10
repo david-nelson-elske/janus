@@ -1,25 +1,17 @@
 #!/usr/bin/env bun
 /**
- * janus CLI — entry point.
+ * janus CLI — entry point for the dev-app.
  *
- * Boots the demo app and executes a command against it.
+ * Other apps can create their own entry point using runCLI() from ./commands.
  */
 
 import { boot } from '../../examples/dev-app/app';
-import { parseArgs, executeCommand } from './commands';
+import { runCLI } from './commands';
 
-async function main() {
-  const parsed = parseArgs(process.argv);
-
-  try {
-    const app = parsed.command === 'help' ? undefined : await boot();
-    const output = await executeCommand(parsed, app?.runtime, app?.registry);
-    console.log(output);
-    process.exit(0);
-  } catch (err) {
-    console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
-  }
-}
-
-main();
+runCLI({
+  boot: async () => {
+    const app = await boot();
+    return { runtime: app.runtime, registry: app.registry };
+  },
+  name: 'janus',
+});

@@ -18,7 +18,7 @@ import type { WhereClause } from './filter';
 import { matchesWhere, compareValues } from './filter';
 import { useSoftDelete } from './adapter-utils';
 
-const DEFAULT_LIMIT = 50;
+const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 1000;
 
 import type { ReconcilableAdapter } from './store-adapter';

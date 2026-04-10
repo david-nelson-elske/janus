@@ -1,0 +1,20 @@
+{
+  "name": "@janus/community-association",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@janus/agent": "workspace:*",
+    "@janus/core": "workspace:*",
+    "@janus/client": "workspace:*",
+    "@janus/http": "workspace:*",
+    "@janus/store": "workspace:*",
+    "@janus/pipeline": "workspace:*",
+    "@janus/vocabulary": "workspace:*",
+    "@janus/calendar": "workspace:*",
+    "hono": "^4.7.0",
+    "preact": "^10.29.0",
+    "preact-render-to-string": "^6.6.0",
+    "stripe": "^20.4.1"
+  }
+}

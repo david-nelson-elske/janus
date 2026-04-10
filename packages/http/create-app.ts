@@ -57,6 +57,8 @@ export interface AppConfig {
   readonly enablePages?: boolean;
   /** Schema reconciliation mode. Default: 'auto'. Use 'skip' after manual applyReconciliation(). */
   readonly reconciliation?: 'auto' | 'skip';
+  /** Additional initiators (e.g., agent surfaces). Merged with auto-generated HTTP initiator. */
+  readonly initiators?: readonly InitiatorConfig[];
 }
 
 export interface App {
@@ -91,6 +93,13 @@ export async function createApp(config: AppConfig): Promise<App> {
     const initiator: InitiatorConfig = { name: 'api-surface', origin: 'consumer', participations };
     initiators.push(initiator);
     surfaceConfigs.push({ initiator, basePath });
+  }
+
+  // Custom initiators (e.g., agent surfaces)
+  if (config.initiators) {
+    for (const init of config.initiators) {
+      initiators.push(init);
+    }
   }
 
   // Deprecated API: surfaces (backward compat)

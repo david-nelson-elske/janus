@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./index.ts",
-    "./commands": "./commands.ts"
+    "./commands": "./commands.ts",
+    "./format": "./format.ts"
   },
   "dependencies": {
     "@janus/core": "workspace:*",

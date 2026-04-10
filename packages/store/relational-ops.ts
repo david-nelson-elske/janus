@@ -16,7 +16,7 @@ import { entityNotFound, versionConflict } from './errors';
 import { tableName } from './schema-gen';
 import { useSoftDelete } from './adapter-utils';
 
-const DEFAULT_LIMIT = 50;
+const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 1000;
 
 // biome-ignore lint/suspicious/noExplicitAny: Kysely generic DB type
