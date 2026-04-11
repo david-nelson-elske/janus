@@ -21,6 +21,12 @@ export type FieldFilter = {
   readonly $nin?: readonly PrimitiveValue[];
   readonly $like?: string;
   readonly $null?: boolean;
+  /**
+   * Matches when the field is NULL OR the field value is in the list.
+   * Used by the scope concern for mixed-tier entities where NULL means
+   * "system-tier" and non-null values are region scopes.
+   */
+  readonly $inOrNull?: readonly PrimitiveValue[];
 };
 
 export type WhereClause = Record<string, FieldFilter | PrimitiveValue | readonly PrimitiveValue[]>;
@@ -69,6 +75,9 @@ export function matchesFieldFilter(value: unknown, filter: FieldFilter): boolean
   if (filter.$null !== undefined) {
     if (filter.$null && value != null) return false;
     if (!filter.$null && value == null) return false;
+  }
+  if (filter.$inOrNull !== undefined) {
+    if (value != null && !filter.$inOrNull.includes(value as PrimitiveValue)) return false;
   }
   return true;
 }

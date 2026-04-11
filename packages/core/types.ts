@@ -118,6 +118,22 @@ export interface TransitionTarget {
   readonly name: string;
 }
 
+/**
+ * Per-entity scope configuration for the scope concern (ADR 01e — region/tier scoping).
+ *
+ * Three tiers:
+ *  - 'system': entity is global. All authenticated users can read; only callers
+ *    whose role is in `bypassRoles` (default ['sysadmin','system']) can write.
+ *  - 'province': every row carries `field` (a relation/string). Users only see
+ *    rows whose `field` value matches one of their `identity.assignments[].scope`.
+ *  - 'mixed': like 'province' but rows with `field === null` are treated as
+ *    system-tier — visible to all, writable only by bypass roles.
+ */
+export type ScopeConfig =
+  | { readonly tier: 'system'; readonly bypassRoles?: readonly string[] }
+  | { readonly tier: 'province'; readonly field: string; readonly bypassRoles?: readonly string[] }
+  | { readonly tier: 'mixed'; readonly field: string; readonly bypassRoles?: readonly string[] };
+
 export interface GraphNodeRecord {
   readonly name: string;
   readonly origin: Origin;
@@ -126,6 +142,7 @@ export interface GraphNodeRecord {
   readonly storage: StorageStrategy;
   readonly description?: string;
   readonly owned?: boolean;
+  readonly scope?: ScopeConfig;
   readonly sensitivity: Sensitivity;
   readonly lifecycles: readonly LifecycleEntry[];
   readonly wiringFields: readonly WiringFieldEntry[];
@@ -145,6 +162,12 @@ export interface DefineConfig {
    * UPDATE @ M4 (ADR 01b): Enforced by the validate concern + store read scoping.
    */
   readonly owned?: boolean;
+  /**
+   * Per-entity tier scoping (ADR 01e). Declares this entity as system-wide,
+   * region-scoped (province), or mixed (per-row null = system, value = region).
+   * Enforced by the scope concern when participate(scope: true) is set.
+   */
+  readonly scope?: ScopeConfig;
   /** Override origin. Defaults to 'consumer'. Framework entities set this to 'framework'. */
   readonly origin?: Origin;
   /** Composite indexes on the entity's table. */
@@ -284,6 +307,11 @@ export interface ParticipateConfig {
   readonly observe?: ObserveConfig;
   readonly invariant?: readonly InvariantConfig[];
   readonly actions?: Record<string, ActionConfig>;
+  /**
+   * Enable the scope-enforce concern for this entity. The entity must declare
+   * `scope` in its `define()` config; if absent, this is a no-op.
+   */
+  readonly scope?: boolean;
   readonly parse?: false;
   readonly validate?: false;
   readonly emit?: false;
@@ -403,10 +431,32 @@ export type DeclarationRecord =
 
 // ── Identity ────────────────────────────────────────────────────
 
+/**
+ * A scope assignment grants the identity access to records whose scope field
+ * matches the assignment's scope value (typically a region id or slug).
+ *
+ * The optional `role` is informational — the scope concern uses only `scope`
+ * to filter records. Per-operation gating is policy-lookup's job (role-based).
+ *
+ * Apps that don't use scoped entities can ignore this entirely.
+ */
+export interface ScopeAssignment {
+  /** The scope value the identity has access to (e.g. a region id or slug). */
+  readonly scope: string;
+  /** Optional: the role granted within this scope. Apps can use this to drive policy. */
+  readonly role?: string;
+}
+
 export interface Identity {
   readonly id: string;
   readonly roles: readonly string[];
   readonly scopes?: readonly string[];
+  /**
+   * Per-scope grants used by the scope concern to filter scoped entities.
+   * Each assignment names a scope value (region) the identity can read/write.
+   * Empty or missing means no scoped access (sysadmin role bypasses this).
+   */
+  readonly assignments?: readonly ScopeAssignment[];
 }
 
 export const ANONYMOUS: Identity = Object.freeze({

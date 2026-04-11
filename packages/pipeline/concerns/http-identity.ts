@@ -109,9 +109,9 @@ async function resolveOidcConfig(ctx: ConcernContext, participationConfig: HttpI
   return undefined;
 }
 
-// ── Claim extraction ────────────────────────────────────────────
+// ── Claim extraction (exported so auth-routes.ts can reuse the same logic) ──
 
-function getNestedClaim(payload: JWTPayload, path: string): unknown {
+export function getNestedClaim(payload: JWTPayload, path: string): unknown {
   let current: unknown = payload;
   for (const segment of path.split('.')) {
     if (current == null || typeof current !== 'object') return undefined;
@@ -121,7 +121,7 @@ function getNestedClaim(payload: JWTPayload, path: string): unknown {
 }
 
 /** Normalize a JWT claim value (array or space-separated string) into a string list. */
-function extractClaimList(payload: JWTPayload, claimPath: string): readonly string[] {
+export function extractClaimList(payload: JWTPayload, claimPath: string): readonly string[] {
   const raw = getNestedClaim(payload, claimPath);
   if (Array.isArray(raw)) return raw.filter((r): r is string => typeof r === 'string');
   if (typeof raw === 'string') return raw.split(/\s+/).filter(Boolean);

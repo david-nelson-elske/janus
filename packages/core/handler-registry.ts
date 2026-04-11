@@ -55,6 +55,7 @@ export function clearRegistry(): void {
 export const FRAMEWORK_HANDLERS: ReadonlyArray<{ key: string; description: string }> = [
   { key: 'policy-lookup', description: 'Authorization via rule lookup' },
   { key: 'rate-limit-check', description: 'Rate limit counter check' },
+  { key: 'scope-enforce', description: 'Tier/region scoping via identity assignments' },
   { key: 'schema-parse', description: 'Schema-driven input parsing and coercion' },
   { key: 'schema-validate', description: 'Schema + lifecycle + ownership validation' },
   { key: 'credential-generate', description: 'Auto-generate Token and QrCode values on create' },

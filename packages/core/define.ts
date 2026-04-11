@@ -227,6 +227,21 @@ export function define(name: string, config: DefineConfig): DefineResult {
   // Derive sensitivity from classification
   const sensitivity = deriveSensitivity(classifiedSchema);
 
+  // Validate scope config if present: 'province' and 'mixed' tiers require a
+  // field that exists in the entity schema.
+  if (config.scope) {
+    if (config.scope.tier === 'province' || config.scope.tier === 'mixed') {
+      if (!config.scope.field) {
+        throw new Error(`Entity '${name}' scope.tier='${config.scope.tier}' requires a 'field'`);
+      }
+      if (!(config.scope.field in schema)) {
+        throw new Error(
+          `Entity '${name}' scope.field='${config.scope.field}' is not declared in the schema`,
+        );
+      }
+    }
+  }
+
   const record: GraphNodeRecord = {
     name,
     origin: config.origin ?? 'consumer',
@@ -235,6 +250,7 @@ export function define(name: string, config: DefineConfig): DefineResult {
     storage: config.storage,
     description: config.description,
     owned: config.owned,
+    scope: config.scope,
     sensitivity,
     lifecycles,
     wiringFields,

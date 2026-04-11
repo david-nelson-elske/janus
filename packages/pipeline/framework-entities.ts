@@ -182,6 +182,13 @@ export const session = define('session', {
     token: Token({ length: 32, expires: '24h' }),
     refresh_token: Str(),
     provider: Str({ required: true }),
+    /**
+     * Cached OIDC roles from the JWT at session-creation time. Stored so
+     * resolveSessionIdentity() can return real roles on subsequent requests
+     * without re-validating the JWT (which we no longer have — only the
+     * opaque session token). Stored as a JSON array of strings.
+     */
+    roles: Json(),
     status: Lifecycle({ active: ['expired', 'revoked'], expired: [], revoked: [] }),
   },
   indexes: [

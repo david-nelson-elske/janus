@@ -12,6 +12,7 @@ import { schemaValidate } from './concerns/schema-validate';
 import { storeRead, storeCreate, storeUpdate, storeDelete } from './concerns/store-handlers';
 import { respondShaper } from './concerns/respond-shaper';
 import { policyLookup } from './concerns/policy-lookup';
+import { scopeEnforce } from './concerns/scope-enforce';
 import { invariantCheck } from './concerns/invariant-check';
 import { emitBroker } from './concerns/emit-broker';
 import { auditRelational, createAuditHandler } from './concerns/audit-relational';
@@ -48,6 +49,7 @@ export function registerHandlers(): void {
   const implementations: Readonly<Record<string, ExecutionHandler>> = {
     'policy-lookup': policyLookup,
     'rate-limit-check': createRateLimitCheck(_rateLimitStore),
+    'scope-enforce': scopeEnforce,
     'schema-parse': schemaParse,
     'schema-validate': schemaValidate,
     'credential-generate': credentialGenerate,

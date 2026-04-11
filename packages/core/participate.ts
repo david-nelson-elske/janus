@@ -142,6 +142,12 @@ export function participate(
     records.push(record(entityName, 'rate-limit-check', 11, false, config.rateLimit));
   }
 
+  // Scope (order=12) — region/tier scoping. The entity must declare `scope` in
+  // its define() config; the concern reads it via ctx.registry.entity().
+  if (config.scope) {
+    records.push(record(entityName, 'scope-enforce', 12, false, {}));
+  }
+
   // Invariant (order=26, create+update — predicates check proposed state)
   if (config.invariant && config.invariant.length > 0) {
     const ops = operationOverlap(PARSE_VALIDATE_OPS, entityOps);

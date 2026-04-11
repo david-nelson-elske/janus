@@ -114,6 +114,19 @@ export function applyWhereClause(q: any, where: WhereClause): any {
               result = result.where(field, 'not in', operand);
             }
             break;
+          case '$inOrNull':
+            // (field IS NULL OR field IN (operand))
+            if (Array.isArray(operand)) {
+              if (operand.length > 0) {
+                result = result.where((eb: any) =>
+                  eb.or([eb(field, 'is', null), eb(field, 'in', operand)]),
+                );
+              } else {
+                // Empty list — only NULL matches
+                result = result.where(field, 'is', null);
+              }
+            }
+            break;
         }
       }
     } else {

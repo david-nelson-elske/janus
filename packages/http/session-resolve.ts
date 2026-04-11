@@ -36,9 +36,17 @@ export async function resolveSessionIdentity(
     const expiresAt = session._tokenExpiresAt as string | undefined;
     if (expiresAt && new Date(expiresAt).getTime() < Date.now()) return null;
 
+    // Roles were captured from the JWT at session creation time and stored as
+    // a JSON array on the session row. Fall back to ['user'] if the column is
+    // empty (legacy sessions created before this field existed).
+    const rawRoles = session.roles;
+    const roles: readonly string[] = Array.isArray(rawRoles)
+      ? (rawRoles as unknown[]).filter((r): r is string => typeof r === 'string')
+      : ['user'];
+
     return Object.freeze({
       id: (session.identity_id as string) || (session.subject as string),
-      roles: Object.freeze(['user'] as readonly string[]),
+      roles: Object.freeze([...roles]),
     });
   } catch {
     return null;

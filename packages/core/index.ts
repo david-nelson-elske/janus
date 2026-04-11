@@ -89,6 +89,8 @@ export type {
 
   // Identity
   Identity,
+  ScopeAssignment,
+  ScopeConfig,
 
   // Pipeline
   PipelineStage,

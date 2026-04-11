@@ -15,7 +15,26 @@ import type { DispatchRuntime, ConnectionManager } from '@janus/pipeline';
 import type { EntityRecord, Identity } from '@janus/core';
 import { ANONYMOUS, isReadPage } from '@janus/core';
 import { decodeJwt } from 'jose';
+import type { JWTPayload } from 'jose';
 import { resolveSessionIdentity } from './session-resolve';
+
+// ── JWT claim extraction (mirror of http-identity.ts to avoid http→pipeline→http circular) ─
+
+function getNestedClaim(payload: JWTPayload, path: string): unknown {
+  let current: unknown = payload;
+  for (const segment of path.split('.')) {
+    if (current == null || typeof current !== 'object') return undefined;
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+}
+
+function extractClaimList(payload: JWTPayload, claimPath: string): readonly string[] {
+  const raw = getNestedClaim(payload, claimPath);
+  if (Array.isArray(raw)) return raw.filter((r): r is string => typeof r === 'string');
+  if (typeof raw === 'string') return raw.split(/\s+/).filter(Boolean);
+  return [];
+}
 
 // ── OIDC discovery cache ───────────────────────────────────────
 
@@ -184,9 +203,10 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
 
       const tokens = await tokenRes.json() as { id_token?: string; access_token: string; refresh_token?: string };
 
-      // Decode the ID token to get the subject.
-      // Uses jose.decodeJwt for structured parsing and basic claims validation.
-      // Full signature verification deferred — token was just received over TLS from the provider's token endpoint.
+      // Decode the ID token (and the access token, which is where Keycloak puts
+      // realm_access.roles) to capture the subject and the role list. Full
+      // signature verification is deferred — the tokens just came over TLS
+      // from the provider's token endpoint.
       let idPayload: { sub: string; [k: string]: unknown };
       if (tokens.id_token) {
         try {
@@ -201,6 +221,25 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
         idPayload = { sub: 'unknown' };
       }
 
+      // Extract roles from the access token (preferred) or id_token, using the
+      // configured roles_claim path. Default 'realm_access.roles' matches Keycloak.
+      // We capture them now and persist on the session so subsequent requests
+      // (which only carry the opaque session cookie, not the JWT) can recover
+      // the roles via session-resolve without re-validating the JWT.
+      const rolesClaim = oidcProvider.roles_claim || 'realm_access.roles';
+      let roles: readonly string[] = [];
+      try {
+        const accessClaims = decodeJwt(tokens.access_token) as JWTPayload;
+        roles = extractClaimList(accessClaims, rolesClaim);
+        // Fall back to the id_token's claim path if the access_token doesn't carry it.
+        if (roles.length === 0 && tokens.id_token) {
+          roles = extractClaimList(idPayload as JWTPayload, rolesClaim);
+        }
+      } catch {
+        // Best-effort — if both decodings fail, store empty roles and let the
+        // app's policy layer decide what to do with an unrolled user.
+      }
+
       // Create session entity
       const sessionResult = await runtime.dispatch(
         'system', 'session', 'create',
@@ -208,6 +247,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
           subject: idPayload.sub,
           refresh_token: tokens.refresh_token ?? '',
           provider: oidcProvider.issuer,
+          roles: [...roles],
         },
       );
 

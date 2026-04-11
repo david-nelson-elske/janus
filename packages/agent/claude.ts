@@ -129,12 +129,26 @@ export interface AgentLoopConfig {
   readonly model?: string;
   /** System prompt. Auto-generated from tools if not provided. */
   readonly systemPrompt?: string;
-  /** Identity for dispatch calls. Uses SYSTEM if not provided. */
-  readonly identity?: Identity;
+  /**
+   * Identity for dispatch calls. Uses SYSTEM if not provided.
+   * Pass a function to support dynamic identity (e.g., a session whose
+   * assignments may be updated between turns) — the function is called
+   * once per tool dispatch.
+   */
+  readonly identity?: Identity | (() => Identity);
   /** Anthropic API key. Uses ANTHROPIC_API_KEY env var if not provided. */
   readonly apiKey?: string;
   /** Max tokens per response. Default: 4096. */
   readonly maxTokens?: number;
+  /**
+   * Optional allowlist of entity names. When set, only tools whose entity is
+   * in this list are exposed to the model — every other discovered tool is
+   * dropped before the schema is sent to Claude. Use this to give a narrowly
+   * scoped agent (e.g. a triage worker or scheduled heartbeat) just the tools
+   * it needs, instead of the full registry. When omitted, all discovered
+   * tools are included (current behavior).
+   */
+  readonly toolEntities?: readonly string[];
   /**
    * Additional tools to register alongside auto-discovered entity tools.
    * Use this for Anthropic server tools (e.g. web_search) or custom client-side
@@ -154,13 +168,36 @@ export interface AgentLoopConfig {
   readonly onToolCall?: (entity: string, operation: string, input: unknown) => void;
   /** Called when a tool returns. For logging/debugging. */
   readonly onToolResult?: (entity: string, operation: string, result: AgentResponse) => void;
+  /**
+   * Called once per Claude API response with the response's `usage` block.
+   * Use this for token accounting and verifying prompt-cache hits
+   * (`cache_read_input_tokens` > 0 means the request hit a warm cache).
+   * Fired for every turn in the tool-use loop, for both chat() and chatStream().
+   */
+  readonly onUsage?: (usage: Anthropic.Messages.Usage) => void;
+}
+
+/** Callbacks emitted while streaming an assistant turn. */
+export interface ChatStreamCallbacks {
+  /** Called for each text delta as the assistant produces it. */
+  onTextDelta?: (delta: string) => void;
+  /** Called when the assistant starts producing text after a tool round trip. */
+  onAssistantStart?: () => void;
+  /** Called when the assistant finishes a contiguous text segment (between tool rounds, or at end). */
+  onAssistantSegmentEnd?: (segmentText: string) => void;
 }
 
 export interface AgentLoop {
   /** Send a user message and get the assistant's text response. Handles tool calls internally. */
   chat(message: string): Promise<string>;
-  /** The discovered tools in Claude API format. */
-  readonly tools: readonly Anthropic.Messages.Tool[];
+  /**
+   * Like chat() but streams text deltas via callbacks. Still handles the
+   * tool-use loop internally; the final string is the concatenation of all
+   * text segments produced across tool rounds.
+   */
+  chatStream(message: string, callbacks: ChatStreamCallbacks): Promise<string>;
+  /** The discovered tools in Claude API format (entity tools + extraTools). */
+  readonly tools: readonly Anthropic.Messages.ToolUnion[];
   /** The conversation message history. */
   readonly messages: Anthropic.Messages.MessageParam[];
   /** Clear conversation history. */
@@ -218,8 +255,13 @@ export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
   const model = config.model ?? 'claude-sonnet-4-6';
   const maxTokens = config.maxTokens ?? 4096;
 
-  // Discover tools and convert to Claude format
-  const discoveredTools = discoverTools(config.registry, initiator);
+  // Discover tools and convert to Claude format. If toolEntities is set,
+  // filter to only the requested entities — this lets callers ship a narrow
+  // tool schema to Claude instead of the entire registry.
+  const allDiscoveredTools = discoverTools(config.registry, initiator);
+  const discoveredTools = config.toolEntities
+    ? allDiscoveredTools.filter((t) => config.toolEntities!.includes(t.entity))
+    : allDiscoveredTools;
   const entityClaudeTools = toClaudeTools(discoveredTools);
   const claudeTools: Anthropic.Messages.ToolUnion[] = [
     ...entityClaudeTools,
@@ -227,6 +269,14 @@ export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
   ];
   const extraToolHandlers = config.extraToolHandlers ?? {};
   const systemPrompt = config.systemPrompt ?? buildSystemPrompt(discoveredTools);
+  // Wrap the system prompt in an ephemeral cache block. Identical system
+  // prompts across calls within the cache TTL (~5 min) are billed at ~10% of
+  // the input rate via cache_read_input_tokens. Stu's system prompt is ~10KB
+  // and reused across every heartbeat cycle and chat turn, so this is the
+  // single biggest cost win in the pipeline.
+  const systemBlocks: Anthropic.Messages.TextBlockParam[] = [
+    { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
+  ];
 
   const client = new Anthropic({ apiKey: config.apiKey });
   const messages: Anthropic.Messages.MessageParam[] = [];
@@ -263,12 +313,13 @@ export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
     config.onToolCall?.(entity, operation, parameters);
 
     try {
+      const id = typeof config.identity === 'function' ? config.identity() : config.identity;
       const result = await config.runtime.dispatch(
         initiator,
         entity,
         operation,
         parameters,
-        config.identity,
+        id,
         { agentRequest: { agentId: 'claude', parameters } },
       );
 
@@ -304,12 +355,13 @@ export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
   }
 
   const createMessage = () =>
-    client.messages.create({ model, max_tokens: maxTokens, system: systemPrompt, tools: claudeTools, messages });
+    client.messages.create({ model, max_tokens: maxTokens, system: systemBlocks, tools: claudeTools, messages });
 
   async function chat(userMessage: string): Promise<string> {
     messages.push({ role: 'user', content: userMessage });
 
     let response = await createMessage();
+    config.onUsage?.(response.usage);
 
     // Tool-use loop: dispatch in parallel until the model produces a final text response
     while (response.stop_reason === 'tool_use') {
@@ -322,6 +374,7 @@ export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
 
       messages.push({ role: 'user', content: toolResults });
       response = await createMessage();
+      config.onUsage?.(response.usage);
     }
 
     messages.push({ role: 'assistant', content: response.content });
@@ -332,12 +385,66 @@ export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
     return textBlocks.map((b) => b.text).join('\n');
   }
 
+  async function chatStream(userMessage: string, callbacks: ChatStreamCallbacks): Promise<string> {
+    messages.push({ role: 'user', content: userMessage });
+
+    const allText: string[] = [];
+
+    // Each iteration of this loop is one Claude turn. We stream text deltas
+    // out via callbacks, then if the model wants to call tools we run them
+    // and stream the next turn.
+    while (true) {
+      let segmentText = '';
+      let started = false;
+
+      const stream = client.messages.stream({
+        model,
+        max_tokens: maxTokens,
+        system: systemBlocks,
+        tools: claudeTools,
+        messages,
+      });
+
+      stream.on('text', (delta) => {
+        if (!started) {
+          started = true;
+          callbacks.onAssistantStart?.();
+        }
+        segmentText += delta;
+        callbacks.onTextDelta?.(delta);
+      });
+
+      const finalMessage = await stream.finalMessage();
+      config.onUsage?.(finalMessage.usage);
+
+      if (started) {
+        callbacks.onAssistantSegmentEnd?.(segmentText);
+        allText.push(segmentText);
+      }
+
+      if (finalMessage.stop_reason !== 'tool_use') {
+        messages.push({ role: 'assistant', content: finalMessage.content });
+        return allText.join('\n');
+      }
+
+      // Tool round: record the assistant turn, run the tools, then loop.
+      messages.push({ role: 'assistant', content: finalMessage.content });
+
+      const toolBlocks = finalMessage.content.filter(
+        (b): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use',
+      );
+      const toolResults = await Promise.all(toolBlocks.map(handleToolUse));
+      messages.push({ role: 'user', content: toolResults });
+    }
+  }
+
   function reset(): void {
     messages.length = 0;
   }
 
   return {
     chat,
+    chatStream,
     tools: claudeTools,
     messages,
     reset,
