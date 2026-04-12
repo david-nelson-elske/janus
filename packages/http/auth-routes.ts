@@ -136,7 +136,13 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       const verifier = generateCodeVerifier();
       const challenge = await generateCodeChallenge(verifier);
 
-      const redirectUri = new URL(`${basePath}/auth/callback`, c.req.url).toString();
+      // Respect reverse-proxy headers so the callback URI matches what the
+      // browser actually sees. Caddy/nginx/traefik all set X-Forwarded-Proto
+      // and X-Forwarded-Host when terminating TLS in front of an HTTP origin.
+      const reqUrl = new URL(c.req.url);
+      const proto = c.req.header('x-forwarded-proto') ?? reqUrl.protocol.replace(':', '');
+      const host = c.req.header('x-forwarded-host') ?? c.req.header('host') ?? reqUrl.host;
+      const redirectUri = `${proto}://${host}${basePath}/auth/callback`;
       pendingAuths.set(state, { verifier, redirectUri, createdAt: Date.now() });
       cleanPendingAuths();
 
