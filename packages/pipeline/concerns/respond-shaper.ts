@@ -37,7 +37,7 @@ export const respondShaper: ExecutionHandler = async (ctx) => {
       const ar = assetRecord as EntityRecord;
       record[field] = {
         id: ar.id,
-        url: ctx.assetBackend ? ctx.assetBackend.url(ar.path as string) : ar.path,
+        url: ctx.assetBackend ? ctx.assetBackend.url(`${ar.id}/${ar.filename}`) : ar.path,
         filename: ar.filename,
         content_type: ar.content_type,
         alt: ar.alt ?? null,
