@@ -183,6 +183,13 @@ export const session = define('session', {
     refresh_token: Str(),
     provider: Str({ required: true }),
     /**
+     * Cached OIDC profile claims captured at session-creation time so the
+     * app layer can pass them to its own member/profile records on first
+     * request without re-validating the JWT.
+     */
+    email: Str(),
+    name: Str(),
+    /**
      * Cached OIDC roles from the JWT at session-creation time. Stored so
      * resolveSessionIdentity() can return real roles on subsequent requests
      * without re-validating the JWT (which we no longer have — only the

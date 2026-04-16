@@ -246,6 +246,15 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
         // app's policy layer decide what to do with an unrolled user.
       }
 
+      // Pull standard OIDC profile claims so the app layer can mirror them
+      // onto its own member record without ever needing to re-validate the
+      // JWT. Keycloak emits `email` and `name`/`preferred_username` when the
+      // `profile email` scopes are requested (which we do above).
+      const claimEmail = (idPayload.email as string | undefined) ?? '';
+      const claimName = (idPayload.name as string | undefined)
+        ?? (idPayload.preferred_username as string | undefined)
+        ?? '';
+
       // Create session entity
       const sessionResult = await runtime.dispatch(
         'system', 'session', 'create',
@@ -253,6 +262,8 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
           subject: idPayload.sub,
           refresh_token: tokens.refresh_token ?? '',
           provider: oidcProvider.issuer,
+          email: claimEmail,
+          name: claimName,
           roles: [...roles],
         },
       );
