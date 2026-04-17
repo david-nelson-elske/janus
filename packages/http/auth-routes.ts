@@ -314,13 +314,19 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
 
     deleteCookie(c, SESSION_COOKIE, { path: '/' });
 
-    // Redirect to OIDC end_session_endpoint if available
+    // Redirect to OIDC end_session_endpoint if available. Build the
+    // post-logout URI from X-Forwarded-Proto/Host so TLS-terminating
+    // reverse proxies don't produce an http:// URI that fails Keycloak's
+    // redirect-URI whitelist. Same pattern as the callback redirect above.
     try {
       const endpoints = await discoverEndpoints(oidcProvider.issuer);
       if (endpoints.end_session_endpoint) {
+        const reqUrl = new URL(c.req.url);
+        const proto = c.req.header('x-forwarded-proto') ?? reqUrl.protocol.replace(':', '');
+        const host = c.req.header('x-forwarded-host') ?? c.req.header('host') ?? reqUrl.host;
         const params = new URLSearchParams({
           client_id: oidcProvider.client_id,
-          post_logout_redirect_uri: config.appBaseUrl ?? new URL('/', c.req.url).toString(),
+          post_logout_redirect_uri: config.appBaseUrl ?? `${proto}://${host}/`,
         });
         return c.redirect(`${endpoints.end_session_endpoint}?${params.toString()}`);
       }
