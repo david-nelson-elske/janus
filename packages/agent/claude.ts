@@ -354,8 +354,45 @@ export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
     }
   }
 
-  const createMessage = () =>
-    client.messages.create({ model, max_tokens: maxTokens, system: systemBlocks, tools: claudeTools, messages });
+  // Before every API call, move a `cache_control` marker to the last
+  // content block of the most-recently-appended message. This adds a
+  // second prompt-cache breakpoint on top of the system-block one so
+  // the entire prior conversation history is cached as the turn-by-turn
+  // prefix grows. On subsequent turns the existing prefix is billed at
+  // ~10% (`cache_read_input_tokens`) and only the new user input pays
+  // full price.
+  //
+  // Max 4 breakpoints per request; we keep old messages clean so only
+  // the latest carries a marker — otherwise long histories would burn
+  // the 4-breakpoint budget on stale ones.
+  function pinCacheToLastMessage(): void {
+    // Strip any cache_control from every prior content block.
+    for (const msg of messages) {
+      if (typeof msg.content === 'string') continue;
+      for (const block of msg.content) {
+        if (typeof block === 'object' && block && 'cache_control' in block) {
+          delete (block as Record<string, unknown>).cache_control;
+        }
+      }
+    }
+    const last = messages[messages.length - 1];
+    if (!last) return;
+    // String content can't carry a cache_control marker — promote it
+    // in-place to a content-block array so every turn type (including
+    // fresh user strings) can anchor the breakpoint.
+    if (typeof last.content === 'string') {
+      last.content = [{ type: 'text', text: last.content }];
+    }
+    const lastBlock = last.content[last.content.length - 1];
+    if (lastBlock && typeof lastBlock === 'object') {
+      (lastBlock as Record<string, unknown>).cache_control = { type: 'ephemeral' };
+    }
+  }
+
+  const createMessage = () => {
+    pinCacheToLastMessage();
+    return client.messages.create({ model, max_tokens: maxTokens, system: systemBlocks, tools: claudeTools, messages });
+  };
 
   async function chat(userMessage: string): Promise<string> {
     messages.push({ role: 'user', content: userMessage });
@@ -397,6 +434,7 @@ export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
       let segmentText = '';
       let started = false;
 
+      pinCacheToLastMessage();
       const stream = client.messages.stream({
         model,
         max_tokens: maxTokens,
