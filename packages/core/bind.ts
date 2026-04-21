@@ -36,6 +36,7 @@ export function bind(
       layout: input.config.layout,
       title: input.config.title,
       loader: input.config.loader,
+      renderMode: input.config.renderMode,
     });
 
     return Object.freeze({

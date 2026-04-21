@@ -68,6 +68,31 @@ export function renderPage(config: RenderPageConfig): string {
 
   const Component = binding.component as ShellComponent;
   const mainCtx = contexts[0];
+  const resolvedIdentity = identity ?? ANONYMOUS;
+  const resolvedPath = path ?? '/';
+
+  // ADR-124-12e: full-page mode — the binding component owns the whole
+  // viewport. Skip the shell wrap entirely. `path`, `identity`, and
+  // `registry` are handed to the component directly so it can build its
+  // own chrome (nav, rails, footer). The document template (head, fonts,
+  // theme CSS, __JANUS__ hydration) still wraps the output.
+  if (binding.config.renderMode === 'full-page') {
+    const componentVNode = h(
+      Component as any,
+      {
+        contexts,
+        context: mainCtx,
+        fields: mainCtx?.fields,
+        config: binding.config,
+        path: resolvedPath,
+        identity: resolvedIdentity,
+        registry,
+      } as any,
+    );
+    const appHtml = renderToString(componentVNode);
+    const initData = serializeInitData(contexts, cursor);
+    return renderDocument(appHtml, initData, title, theme);
+  }
 
   const componentVNode = h(
     Component as unknown as ShellComponent,
@@ -81,8 +106,8 @@ export function renderPage(config: RenderPageConfig): string {
 
   const shellProps = {
     children: componentVNode,
-    path: path ?? '/',
-    identity: identity ?? ANONYMOUS,
+    path: resolvedPath,
+    identity: resolvedIdentity,
     registry,
   };
 

@@ -410,7 +410,29 @@ export interface BindingConfig {
    *  one page). Without a loader, the handler still performs the default
    *  filtered read (list) or read-by-id (detail) as it did pre-12d. */
   readonly loader?: Loader;
+  /** How the binding component sits inside the rendered document
+   *  (ADR-124-12e).
+   *
+   *  - `'shell'` (default): the component output is wrapped in the app
+   *    shell (framework `DefaultShell` or consumer `layout.shell`). The
+   *    component receives `contexts` / `fields` / `config` / `data` and
+   *    renders only the center content.
+   *  - `'full-page'`: the framework skips the shell wrap. The component
+   *    renders directly into `<body>` and owns its own chrome (nav,
+   *    rails, footer). `path`, `identity`, and `registry` are passed as
+   *    props so the component can build its own nav. Use when a page
+   *    needs a layout the app-level shell can't express — three-pane
+   *    dashboards, conversation layouts, etc.
+   *
+   *  The document template (head, fonts, theme CSS, `__JANUS__`
+   *  hydration) still wraps every page regardless of `renderMode`. */
+  readonly renderMode?: BindingRenderMode;
 }
+
+/** How a binding component renders inside the document (ADR-124-12e).
+ *  `'shell'` (default) wraps the component in the app shell.
+ *  `'full-page'` gives the component the whole viewport. */
+export type BindingRenderMode = 'shell' | 'full-page';
 
 // ── Binding loader types (ADR-124-12d) ──────────────────────────
 

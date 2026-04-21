@@ -81,6 +81,7 @@ export type {
   BindResult,
   LoaderContext,
   Loader,
+  BindingRenderMode,
 
   // Declaration
   DeclarationRecord,
