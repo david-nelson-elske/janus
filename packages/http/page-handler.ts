@@ -86,6 +86,11 @@ export function createPageHandler(config: PageHandlerConfig) {
 
       // Render with the component, passing the page data
       const Component = binding.component as any;
+      // Per-binding title override (ADR-12c §title) wins over the
+      // entity-plural default. Consumers set `config.title` in bind()
+      // when "milestones" should render as "Timeline" without needing
+      // a custom shadowing route.
+      const listTitle = binding.config.title ?? `${route.entity}s`;
       const html = renderPage({
         registry,
         contexts: [ctx],
@@ -93,7 +98,7 @@ export function createPageHandler(config: PageHandlerConfig) {
           ...binding,
           component: (props: any) => Component({ ...props, page, records: page.records }),
         },
-        title: composeTitle(`${route.entity}s`, theme?.title),
+        title: composeTitle(listTitle, theme?.title),
         path,
         identity,
         theme,
@@ -129,11 +134,18 @@ export function createPageHandler(config: PageHandlerConfig) {
       node.schema,
     );
 
+    // For detail views, the record's own title/name is usually the most
+    // specific label. A config-level title override would flatten every
+    // detail page to the same title, which is rarely useful — so we only
+    // fall back to binding.config.title when the record has nothing.
+    const detailTitle = String(
+      record.title ?? record.name ?? binding.config.title ?? route.entity,
+    );
     const html = renderPage({
       registry,
       contexts: [ctx],
       binding,
-      title: composeTitle(String(record.title ?? record.name ?? route.entity), theme?.title),
+      title: composeTitle(detailTitle, theme?.title),
       path,
       identity,
       theme,

@@ -387,6 +387,19 @@ export interface BindingConfig {
   readonly fields?: Record<string, FieldBindingConfig>;
   readonly columns?: readonly string[];     // for list views: visible columns in order
   readonly layout?: string;                 // layout hint: 'single-column', 'two-column', 'tabbed'
+  /** Override the entity-derived page title for this view.
+   *
+   *  List views otherwise default to the plural entity name (e.g. the
+   *  `milestone` entity's list shows "milestones"). Detail views default
+   *  to the record's `title` / `name` / id. Set `title` in the binding
+   *  config to use a human-friendlier label without shadowing the
+   *  binding with a custom route — e.g. set `"Timeline"` on a
+   *  milestone list binding so the page title reads "Timeline — Site"
+   *  instead of "milestones — Site".
+   *
+   *  Composed against `theme.title` via the same `${x} — ${theme.title}`
+   *  format — only the left-hand side changes. */
+  readonly title?: string;
 }
 
 export interface BindingRecord {

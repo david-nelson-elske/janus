@@ -97,6 +97,59 @@ describe('theme hook', () => {
     expect(html).toContain('<title>tasks — Find My Next Bite</title>');
   });
 
+  test('binding.config.title overrides the entity-plural default on list views', async () => {
+    clearRegistry();
+    const task = defineTask();
+    const decls = [
+      task,
+      participate(task, {}),
+      // The binding declares a human-friendlier page title than the
+      // entity plural. Useful when the entity name is a noun but the
+      // page-title should read as a section label (e.g. "milestone"
+      // entity → "Timeline" page title).
+      bind(task, [
+        { component: TaskList, view: 'list', config: { title: 'Momentum' } },
+        { component: TaskDetail, view: 'detail', config: {} },
+      ]),
+    ];
+    app = await createApp({
+      declarations: decls,
+      http: { basePath: '/api' },
+      theme: { title: 'My Site' },
+    });
+    await seed(app, [{ title: 'A' }]);
+
+    const res = await app.fetch(new Request('http://localhost/tasks'));
+    const html = await res.text();
+    // Per-binding title wins over the entity-plural default; theme.title
+    // suffix still applies.
+    expect(html).toContain('<title>Momentum — My Site</title>');
+    expect(html).not.toContain('<title>tasks');
+  });
+
+  test('binding.config.title does NOT override detail pages when the record has a title', async () => {
+    clearRegistry();
+    const task = defineTask();
+    const decls = [
+      task,
+      participate(task, {}),
+      bind(task, [
+        { component: TaskList, view: 'list', config: { title: 'Momentum' } },
+        { component: TaskDetail, view: 'detail', config: { title: 'Momentum' } },
+      ]),
+    ];
+    app = await createApp({ declarations: decls, http: { basePath: '/api' } });
+    const created = await app.dispatch('task', 'create', { title: 'Real Task' });
+    const taskId = (created.data as { id: string }).id;
+
+    const res = await app.fetch(new Request(`http://localhost/tasks/${taskId}`));
+    const html = await res.text();
+    // Detail title prefers the record's own title/name over the binding
+    // override — flattening every detail to one title would be unhelpful.
+    expect(html).toContain('<title>Real Task</title>');
+    expect(html).not.toContain('<title>Momentum');
+  });
+
   test('theme.css suppresses APP_STYLES, keeps CSS_RESET', async () => {
     clearRegistry();
     app = await createApp({

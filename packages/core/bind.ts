@@ -34,6 +34,7 @@ export function bind(
       fields,
       columns: input.config.columns ? Object.freeze([...input.config.columns]) : undefined,
       layout: input.config.layout,
+      title: input.config.title,
     });
 
     return Object.freeze({
