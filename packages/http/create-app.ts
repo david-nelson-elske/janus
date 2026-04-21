@@ -22,23 +22,28 @@ import type {
   ParticipationRecord,
 } from '@janus/core';
 import { compile, isReadPage, SYSTEM } from '@janus/core';
+import type { Broker, ConnectionManager, DispatchRuntime, OidcConfig } from '@janus/pipeline';
 import {
-  registerHandlers,
-  createDispatchRuntime,
   createBroker,
-  startSubscriptionProcessor,
+  createConnectionManager,
+  createDispatchRuntime,
   frameworkEntities,
   frameworkParticipations,
-  createConnectionManager,
+  registerHandlers,
   startBrokerSseBridge,
+  startSubscriptionProcessor,
 } from '@janus/pipeline';
-import type { DispatchRuntime, Broker, ConnectionManager, OidcConfig } from '@janus/pipeline';
-import { createSqliteAdapter, createMemoryAdapter, createDerivedAdapter, createEntityStore } from '@janus/store';
+import {
+  createDerivedAdapter,
+  createEntityStore,
+  createMemoryAdapter,
+  createSqliteAdapter,
+} from '@janus/store';
 import { Hono } from 'hono';
-import { createHttpApp } from './hono-app';
-import { apiSurface } from './surface';
-import { createAuthRoutes } from './auth-routes';
 import type { OidcProviderRecord } from './auth-routes';
+import { createAuthRoutes } from './auth-routes';
+import { createHttpApp } from './hono-app';
+import type { apiSurface } from './surface';
 
 export interface AppConfig {
   readonly declarations: readonly DeclarationRecord[];
@@ -59,6 +64,10 @@ export interface AppConfig {
   readonly reconciliation?: 'auto' | 'skip';
   /** Additional initiators (e.g., agent surfaces). Merged with auto-generated HTTP initiator. */
   readonly initiators?: readonly InitiatorConfig[];
+  /** Consumer theme overrides for binding-driven SSR pages (ADR-124-12c). */
+  readonly theme?: import('./ssr-renderer').ThemeConfig;
+  /** Consumer layout shell overrides for binding-driven SSR pages (ADR-124-12c). */
+  readonly layout?: import('./ssr-renderer').LayoutConfig;
 }
 
 export interface App {
@@ -67,7 +76,12 @@ export interface App {
   readonly runtime: DispatchRuntime;
   readonly broker: Broker;
   readonly connectionManager: ConnectionManager;
-  dispatch(entity: string, operation: string, input: unknown, identity?: Identity): Promise<DispatchResponse>;
+  dispatch(
+    entity: string,
+    operation: string,
+    input: unknown,
+    identity?: Identity,
+  ): Promise<DispatchResponse>;
   fetch(request: Request): Promise<Response>;
   shutdown(): Promise<void>;
 }
@@ -85,10 +99,34 @@ export async function createApp(config: AppConfig): Promise<App> {
   if (config.http) {
     const basePath = config.http.basePath ?? '/api';
     const participations: ParticipationRecord[] = [
-      { source: 'api-surface', handler: 'http-receive', order: 5, transactional: false, config: { basePath } },
-      { source: 'api-surface', handler: 'http-identity', order: 6, transactional: false, config: config.apiKeys ? { keys: config.apiKeys } : {} },
-      { source: 'api-surface', handler: 'identity-provision', order: 7, transactional: false, config: {} },
-      { source: 'api-surface', handler: 'http-respond', order: 80, transactional: false, config: {} },
+      {
+        source: 'api-surface',
+        handler: 'http-receive',
+        order: 5,
+        transactional: false,
+        config: { basePath },
+      },
+      {
+        source: 'api-surface',
+        handler: 'http-identity',
+        order: 6,
+        transactional: false,
+        config: config.apiKeys ? { keys: config.apiKeys } : {},
+      },
+      {
+        source: 'api-surface',
+        handler: 'identity-provision',
+        order: 7,
+        transactional: false,
+        config: {},
+      },
+      {
+        source: 'api-surface',
+        handler: 'http-respond',
+        order: 80,
+        transactional: false,
+        config: {},
+      },
     ];
     const initiator: InitiatorConfig = { name: 'api-surface', origin: 'consumer', participations };
     initiators.push(initiator);
@@ -111,11 +149,7 @@ export async function createApp(config: AppConfig): Promise<App> {
   }
 
   const registry = compile(
-    [
-      ...config.declarations,
-      ...frameworkEntities,
-      ...frameworkParticipations,
-    ],
+    [...config.declarations, ...frameworkEntities, ...frameworkParticipations],
     initiators,
   );
 
@@ -144,13 +178,18 @@ export async function createApp(config: AppConfig): Promise<App> {
 
   // Phase 3: Runtime
   const broker = createBroker();
-  const runtime = createDispatchRuntime({ registry, store, broker, assetBackend: config.assetBackend });
+  const runtime = createDispatchRuntime({
+    registry,
+    store,
+    broker,
+    assetBackend: config.assetBackend,
+  });
 
   // Phase 4: Subscription processor
   const subscriptionHandle = startSubscriptionProcessor({ runtime, broker, store, registry });
 
   // Phase 5: Broker → SSE bridge
-  const enableSse = config.enableSse ?? (surfaceConfigs.length > 0);
+  const enableSse = config.enableSse ?? surfaceConfigs.length > 0;
   let sseBridgeUnsub: (() => void) | undefined;
   if (enableSse) {
     sseBridgeUnsub = startBrokerSseBridge({ broker, connectionManager, store });
@@ -184,6 +223,8 @@ export async function createApp(config: AppConfig): Promise<App> {
       assetBackend: config.assetBackend,
       enablePages: config.enablePages,
       authRoutes,
+      theme: config.theme,
+      layout: config.layout,
     });
   } else {
     honoApp = new Hono();

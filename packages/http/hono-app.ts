@@ -9,16 +9,16 @@
  * UPDATE @ M8-render: Add SSE endpoint and SSR page routes.
  */
 
-import { Hono } from 'hono';
 import type { AssetBackend, CompileResult, HttpRequestContext, InitiatorConfig } from '@janus/core';
 import { SYSTEM } from '@janus/core';
+import type { ConnectionManager, DispatchRuntime, HttpResponse } from '@janus/pipeline';
 import { isSemanticField } from '@janus/vocabulary';
-import type { DispatchRuntime, ConnectionManager } from '@janus/pipeline';
-import type { HttpResponse } from '@janus/pipeline';
-import { deriveRouteTable } from './route-table';
-import { createSseHandler } from './sse-handler';
+import { Hono } from 'hono';
 import { createPageHandler } from './page-handler';
+import { deriveRouteTable } from './route-table';
 import { resolveSessionIdentity } from './session-resolve';
+import { createSseHandler } from './sse-handler';
+import type { LayoutConfig, ThemeConfig } from './ssr-renderer';
 
 export interface CreateHttpAppConfig {
   readonly registry: CompileResult;
@@ -28,6 +28,10 @@ export interface CreateHttpAppConfig {
   readonly assetBackend?: AssetBackend;
   readonly enablePages?: boolean;
   readonly authRoutes?: import('hono').Hono;
+  /** Consumer theme overrides (ADR-124-12c). */
+  readonly theme?: ThemeConfig;
+  /** Consumer layout overrides (ADR-124-12c). */
+  readonly layout?: LayoutConfig;
 }
 
 /**
@@ -91,13 +95,33 @@ export function createHttpApp(config: CreateHttpAppConfig): Hono {
       app.post(assetsBase, async (c) => {
         const contentType = c.req.header('content-type') ?? '';
         if (!contentType.includes('multipart/form-data')) {
-          return c.json({ ok: false, error: { kind: 'parse-error', message: 'Expected multipart/form-data', retryable: false } }, 422);
+          return c.json(
+            {
+              ok: false,
+              error: {
+                kind: 'parse-error',
+                message: 'Expected multipart/form-data',
+                retryable: false,
+              },
+            },
+            422,
+          );
         }
 
         const formData = await c.req.formData();
         const file = formData.get('file');
         if (!file || !(file instanceof File)) {
-          return c.json({ ok: false, error: { kind: 'parse-error', message: 'Missing file field in multipart form', retryable: false } }, 422);
+          return c.json(
+            {
+              ok: false,
+              error: {
+                kind: 'parse-error',
+                message: 'Missing file field in multipart form',
+                retryable: false,
+              },
+            },
+            422,
+          );
         }
 
         const bytes = new Uint8Array(await file.arrayBuffer());
@@ -122,7 +146,7 @@ export function createHttpApp(config: CreateHttpAppConfig): Hono {
             backend: 'local',
             path: writeResult.path,
             checksum: writeResult.checksum,
-            alt: formData.get('alt') as string ?? undefined,
+            alt: (formData.get('alt') as string) ?? undefined,
           },
           undefined,
           { httpRequest: { headers } },
@@ -170,7 +194,17 @@ export function createHttpApp(config: CreateHttpAppConfig): Hono {
             },
           });
         } catch {
-          return c.json({ ok: false, error: { kind: 'not-found', message: 'Asset file not found on disk', retryable: false } }, 404);
+          return c.json(
+            {
+              ok: false,
+              error: {
+                kind: 'not-found',
+                message: 'Asset file not found on disk',
+                retryable: false,
+              },
+            },
+            404,
+          );
         }
       });
 
@@ -197,7 +231,12 @@ export function createHttpApp(config: CreateHttpAppConfig): Hono {
     // Scans all QrCode-bearing entities and resolves a code to its record.
     // GET /verify/:code → { entity, id, field, singleUse, record } | 404 | 410
     {
-      const qrCodeFields: { entity: string; field: string; expiresWith?: string; singleUse?: boolean }[] = [];
+      const qrCodeFields: {
+        entity: string;
+        field: string;
+        expiresWith?: string;
+        singleUse?: boolean;
+      }[] = [];
       for (const [name, node] of config.registry.graphNodes) {
         for (const [fieldName, fieldDef] of Object.entries(node.schema)) {
           if (!isSemanticField(fieldDef) || fieldDef.kind !== 'qrcode') continue;
@@ -220,7 +259,10 @@ export function createHttpApp(config: CreateHttpAppConfig): Hono {
         app.get(`${surface.basePath}/verify/:code`, async (c) => {
           const code = c.req.param('code');
           if (!code) {
-            return c.json({ ok: false, error: { kind: 'parse-error', message: 'Missing code parameter' } }, 400);
+            return c.json(
+              { ok: false, error: { kind: 'parse-error', message: 'Missing code parameter' } },
+              400,
+            );
           }
 
           // Rate limiting by IP
@@ -229,7 +271,13 @@ export function createHttpApp(config: CreateHttpAppConfig): Hono {
           const entry = verifyAttempts.get(ip);
           if (entry && entry.resetAt > now) {
             if (entry.count >= VERIFY_MAX) {
-              return c.json({ ok: false, error: { kind: 'rate-limit-exceeded', message: 'Too many verification attempts' } }, 429);
+              return c.json(
+                {
+                  ok: false,
+                  error: { kind: 'rate-limit-exceeded', message: 'Too many verification attempts' },
+                },
+                429,
+              );
             }
             entry.count++;
           } else {
@@ -252,31 +300,41 @@ export function createHttpApp(config: CreateHttpAppConfig): Hono {
             // Handle both single-record and paginated responses
             const data = response.data as Record<string, unknown>;
             const records = data.records as Record<string, unknown>[] | undefined;
-            const record = records && records.length > 0 ? records[0] : (data.id ? data : null);
+            const record = records && records.length > 0 ? records[0] : data.id ? data : null;
             if (!record) continue;
 
             // Check expiry — return same 404 as not-found to prevent enumeration
             if (qr.expiresWith) {
               const expiresAt = record[qr.expiresWith];
               if (expiresAt) {
-                const expiresTime = typeof expiresAt === 'string' ? new Date(expiresAt).getTime() : Number(expiresAt);
+                const expiresTime =
+                  typeof expiresAt === 'string' ? new Date(expiresAt).getTime() : Number(expiresAt);
                 if (Date.now() > expiresTime) {
-                  return c.json({ ok: false, error: { kind: 'not-found', message: 'Code not found' } }, 404);
+                  return c.json(
+                    { ok: false, error: { kind: 'not-found', message: 'Code not found' } },
+                    404,
+                  );
                 }
               }
             }
 
             // Return minimal verification response — do not expose full record
-            return c.json({
-              ok: true,
-              entity: qr.entity,
-              id: record.id,
-              field: qr.field,
-              singleUse: qr.singleUse ?? false,
-            }, 200);
+            return c.json(
+              {
+                ok: true,
+                entity: qr.entity,
+                id: record.id,
+                field: qr.field,
+                singleUse: qr.singleUse ?? false,
+              },
+              200,
+            );
           }
 
-          return c.json({ ok: false, error: { kind: 'not-found', message: 'Code not found' } }, 404);
+          return c.json(
+            { ok: false, error: { kind: 'not-found', message: 'Code not found' } },
+            404,
+          );
         });
       }
     }
@@ -341,6 +399,8 @@ export function createHttpApp(config: CreateHttpAppConfig): Hono {
     const pageHandler = createPageHandler({
       registry: config.registry,
       runtime: config.runtime,
+      theme: config.theme,
+      layout: config.layout,
     });
     app.get('/*', pageHandler);
   }

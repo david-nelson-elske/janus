@@ -3,15 +3,48 @@
  *
  * Renders a Preact component tree to HTML, wraps in a full HTML document,
  * and embeds serialized binding context data in window.__JANUS__.
+ *
+ * Per ADR-124-12c, accepts optional `theme` and `layout` overrides so
+ * consumers can brand the document and replace the nav/shell without
+ * abandoning the framework-derived page handler.
  */
 
+import type { BindingContext, SerializedBindingContext } from '@janus/client';
+import { serializeInitData } from '@janus/client';
+import type { BindingRecord, CompileResult, Identity } from '@janus/core';
+import { ANONYMOUS } from '@janus/core';
 import { h } from 'preact';
 import renderToString from 'preact-render-to-string';
-import type { BindingContext } from '@janus/client';
-import type { SerializedBindingContext } from '@janus/client';
-import type { BindingRecord, CompileResult } from '@janus/core';
-import { serializeInitData } from '@janus/client';
-import { buildNavLinks } from './page-router';
+import { DefaultShell, MinimalShell, type ShellComponent } from './shells';
+
+// ── Public types ───────────────────────────────────────────────────
+
+export interface ThemeConfig {
+  /** Inline CSS appended after the framework reset. When set, APP_STYLES is suppressed. */
+  readonly css?: string;
+  /** External stylesheet URL(s). Loaded with `<link rel="stylesheet">` in <head>. */
+  readonly cssUrl?: string | readonly string[];
+  /** Font configuration. When set, replaces the default Inter + JetBrains Mono links. */
+  readonly fonts?: ThemeFontsConfig;
+  /** Default document title. Page-specific titles (bindings) override. */
+  readonly title?: string;
+  /** Extra <head> content — favicon, meta tags, analytics. Rendered as-is, no escaping. */
+  readonly headExtras?: string;
+  /** <html lang> attribute. Default: 'en'. */
+  readonly lang?: string;
+}
+
+export interface ThemeFontsConfig {
+  readonly href: string;
+  readonly preconnect?: readonly string[];
+}
+
+export interface LayoutConfig {
+  /** Full-page wrapper component. Receives children + contextual data. */
+  readonly shell?: ShellComponent;
+  /** When true and no `shell`, render `#app + <main>` with no nav. */
+  readonly suppressDefaultNav?: boolean;
+}
 
 export interface RenderPageConfig {
   readonly registry: CompileResult;
@@ -19,62 +52,94 @@ export interface RenderPageConfig {
   readonly binding: BindingRecord;
   readonly cursor?: string;
   readonly title?: string;
+  readonly path?: string;
+  readonly identity?: Identity;
+  readonly theme?: ThemeConfig;
+  readonly layout?: LayoutConfig;
 }
+
+// ── Public API ─────────────────────────────────────────────────────
 
 /**
  * Render a full HTML page from binding contexts.
  */
 export function renderPage(config: RenderPageConfig): string {
-  const { registry, contexts, binding, cursor, title } = config;
-  const navLinks = buildNavLinks(registry);
+  const { registry, contexts, binding, cursor, title, path, identity, theme, layout } = config;
 
-  // Render the bound component
-  const Component = binding.component as any;
+  const Component = binding.component as ShellComponent;
   const mainCtx = contexts[0];
 
-  const appVNode = h('div', { id: 'app' },
-    h('nav', { class: 'janus-nav' },
-      h('div', { class: 'nav-brand' }, 'Janus'),
-      h('div', { class: 'nav-links' },
-        ...navLinks.map((link) =>
-          h('a', { href: link.href, class: 'nav-link' }, link.label),
-        ),
-      ),
-    ),
-    h('main', { class: 'janus-main' },
-      h(Component, { contexts, context: mainCtx, fields: mainCtx?.fields, config: binding.config }),
-    ),
+  const componentVNode = h(
+    Component as unknown as ShellComponent,
+    {
+      contexts,
+      context: mainCtx,
+      fields: mainCtx?.fields,
+      config: binding.config,
+    } as unknown as Parameters<ShellComponent>[0],
   );
 
-  const appHtml = renderToString(appVNode);
+  const shellProps = {
+    children: componentVNode,
+    path: path ?? '/',
+    identity: identity ?? ANONYMOUS,
+    registry,
+  };
 
-  // Serialize contexts for client hydration
+  let Shell: ShellComponent;
+  if (layout?.shell) {
+    Shell = layout.shell;
+  } else if (layout?.suppressDefaultNav) {
+    Shell = MinimalShell;
+  } else {
+    Shell = DefaultShell;
+  }
+
+  const appHtml = renderToString(h(Shell, shellProps));
+
   const initData = serializeInitData(contexts, cursor);
 
-  return renderDocument(appHtml, initData, title);
+  return renderDocument(appHtml, initData, title, theme);
 }
 
-/**
- * Render the HTML document shell.
- */
+// ── Document template ──────────────────────────────────────────────
+
 function renderDocument(
   appHtml: string,
   initData: { contexts: readonly SerializedBindingContext[]; cursor?: string },
   title?: string,
+  theme?: ThemeConfig,
 ): string {
-  const pageTitle = title ?? 'Janus';
+  const lang = theme?.lang ?? 'en';
+  const pageTitle = title ?? theme?.title ?? 'Janus';
   const initJson = JSON.stringify(initData);
 
+  const fontsHtml = theme?.fonts ? renderFonts(theme.fonts) : DEFAULT_FONTS_HTML;
+
+  const cssUrls = theme?.cssUrl
+    ? Array.isArray(theme.cssUrl)
+      ? theme.cssUrl
+      : [theme.cssUrl]
+    : [];
+  const cssUrlLinks = cssUrls
+    .map((url) => `<link rel="stylesheet" href="${escapeHtml(url)}" />`)
+    .join('\n  ');
+
+  // theme.css replaces APP_STYLES (per ADR-12c); CSS_RESET is always present.
+  const inlineStyles = theme?.css ? CSS_RESET + theme.css : CSS_RESET + APP_STYLES;
+
+  const headExtras = theme?.headExtras ?? '';
+
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${escapeHtml(lang)}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${escapeHtml(pageTitle)}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <style>${CSS_RESET}${APP_STYLES}</style>
+  ${fontsHtml}
+  ${cssUrlLinks}
+  <style>${inlineStyles}</style>
+  ${headExtras}
 </head>
 <body>
   ${appHtml}
@@ -85,8 +150,28 @@ function renderDocument(
 </html>`;
 }
 
+function renderFonts(fonts: ThemeFontsConfig): string {
+  const preconnect = fonts.preconnect ?? [];
+  const preconnectLinks = preconnect
+    .map(
+      (host, idx) =>
+        `<link rel="preconnect" href="${escapeHtml(host)}"${idx > 0 ? ' crossorigin' : ''} />`,
+    )
+    .join('\n  ');
+  const sheet = `<link href="${escapeHtml(fonts.href)}" rel="stylesheet" />`;
+  return preconnect.length > 0 ? `${preconnectLinks}\n  ${sheet}` : sheet;
+}
+
+const DEFAULT_FONTS_HTML = `<link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />`;
+
 function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 // ── Styles ─────────────────────────────────────────────────────────
