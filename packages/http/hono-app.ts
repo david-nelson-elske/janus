@@ -40,11 +40,13 @@ export interface CreateHttpAppConfig {
 export function createHttpApp(config: CreateHttpAppConfig): Hono {
   const app = new Hono();
 
-  // Security headers
+  // Security headers. X-Frame-Options is SAMEORIGIN (not DENY) so an
+  // app's own admin surface can iframe its own public pages — e.g. a
+  // CMS-style preview pane. Cross-origin framing is still blocked.
   app.use('*', async (c, next) => {
     await next();
     c.header('X-Content-Type-Options', 'nosniff');
-    c.header('X-Frame-Options', 'DENY');
+    c.header('X-Frame-Options', 'SAMEORIGIN');
     c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
   });
 
