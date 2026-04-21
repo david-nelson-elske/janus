@@ -400,7 +400,49 @@ export interface BindingConfig {
    *  Composed against `theme.title` via the same `${x} — ${theme.title}`
    *  format — only the left-hand side changes. */
   readonly title?: string;
+  /** Async loader that composes the data passed to the bound component
+   *  (ADR-124-12d). When present, the framework skips its default
+   *  single-entity read and awaits the loader instead; the loader's
+   *  return value reaches the component as the `data` prop.
+   *
+   *  Use when a page needs to compose multiple reads (e.g. a decision
+   *  view that wants its decision + sections + steps + chat history on
+   *  one page). Without a loader, the handler still performs the default
+   *  filtered read (list) or read-by-id (detail) as it did pre-12d. */
+  readonly loader?: Loader;
 }
+
+// ── Binding loader types (ADR-124-12d) ──────────────────────────
+
+/** Context object passed to a binding loader. The `read` and `dispatch`
+ *  helpers thread the request's resolved identity into every call, so
+ *  loader data access goes through the same policy/audit/observe pipeline
+ *  as any other dispatch — a loader cannot bypass authorization. */
+export interface LoaderContext {
+  /** Route params extracted from the URL. Detail views populate `id`;
+   *  list views receive an empty object. */
+  readonly params: { readonly id?: string };
+  /** Identity resolved from the session cookie, or `ANONYMOUS`. */
+  readonly identity: Identity;
+  /** The parsed request URL. Useful for reading query params beyond the
+   *  framework's built-in list-view params. */
+  readonly url: URL;
+  /** The raw Fetch Request. Available when a loader needs headers or
+   *  the request body beyond what `url` exposes. */
+  readonly request: Request;
+  /** Shortcut for a `read` dispatch against the runtime. Identity is
+   *  threaded automatically; the policy concern runs as usual. Returns
+   *  the response's `data` payload directly and throws on a dispatch
+   *  error, to keep loader code concise. */
+  read(entity: string, input?: unknown): Promise<unknown>;
+  /** General-purpose dispatch helper. Returns the full `DispatchResponse`
+   *  so the loader can inspect `ok`, `error`, warnings, etc. */
+  dispatch(entity: string, operation: string, input?: unknown): Promise<DispatchResponse>;
+}
+
+/** A binding loader. Runs before the component renders; its return value
+ *  reaches the component as the `data` prop. */
+export type Loader<TData = unknown> = (ctx: LoaderContext) => Promise<TData>;
 
 export interface BindingRecord {
   readonly source: string;

@@ -9,7 +9,7 @@ import { bind } from '@janus/core';
 import { task, adr, question } from './entities';
 import { TaskDetail } from './components/task-detail';
 import { TaskList } from './components/task-list';
-import { AdrDetail } from './components/adr-detail';
+import { AdrDetailComposed } from './components/adr-detail-composed';
 import { AdrList } from './components/adr-list';
 import { QuestionDetail } from './components/question-detail';
 import { QuestionList } from './components/question-list';
@@ -45,16 +45,20 @@ export const taskBinding = bind(task, [
 
 export const adrBinding = bind(adr, [
   {
-    component: AdrDetail as any,
+    // ADR-124-12d: the detail page is built by a loader that composes
+    // the adr record with its linked questions. The component receives
+    // the composed payload on `data`; `fields`/`layout` are no longer
+    // driving the render (the component owns the layout).
+    component: AdrDetailComposed as any,
     view: 'detail',
     config: {
-      fields: {
-        title: { component: 'heading', agent: 'read-write', label: 'Title' },
-        summary: { component: 'richtext', agent: 'read-write' },
-        content: { component: 'richtext', agent: 'read-write' },
-        status: { component: 'badge', agent: 'read' },
+      loader: async (ctx) => {
+        const adr = await ctx.read('adr', { id: ctx.params.id });
+        const qPage = (await ctx.read('question', {
+          where: { adr: ctx.params.id },
+        })) as { records: readonly Record<string, unknown>[] };
+        return { adr, questions: qPage.records };
       },
-      layout: 'single-column',
     },
   },
   {

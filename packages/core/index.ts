@@ -79,6 +79,8 @@ export type {
   BindingRecord,
   BindingIndex,
   BindResult,
+  LoaderContext,
+  Loader,
 
   // Declaration
   DeclarationRecord,

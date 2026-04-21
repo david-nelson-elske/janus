@@ -7,10 +7,14 @@
  * Per ADR-124-12c, list views accept `?limit=`, `?offset=`, `?sort=`,
  * `?search=`, and `?where.field=value` query params which flow into the
  * dispatch input. Theme + layout overrides are threaded from createApp.
+ *
+ * Per ADR-124-12d, a binding may declare a `loader` on its config. When
+ * present, the handler awaits the loader and hands the result to the
+ * component as the `data` prop, skipping its default single-entity read.
  */
 
 import { createBindingContext } from '@janus/client';
-import type { CompileResult, Identity } from '@janus/core';
+import type { CompileResult, DispatchResponse, Identity, Loader, LoaderContext } from '@janus/core';
 import { ANONYMOUS } from '@janus/core';
 import type { DispatchRuntime } from '@janus/pipeline';
 import type { Context } from 'hono';
@@ -61,6 +65,38 @@ export function createPageHandler(config: PageHandlerConfig) {
       // List view — parse query params into dispatch input (ADR-12c)
       const readInput = parseListQueryParams(url.searchParams);
 
+      // ADR-12d: a binding-declared loader composes data itself;
+      // the default filtered read is skipped.
+      const loader = binding.config.loader;
+      if (loader) {
+        const data = await runLoader(loader, {
+          runtime,
+          identity,
+          url,
+          request: c.req.raw,
+          params: {},
+        });
+        if (!data.ok) {
+          return c.html(renderErrorPage(data.error), 500);
+        }
+        const Component = binding.component as any;
+        const listTitle = binding.config.title ?? `${route.entity}s`;
+        const html = renderPage({
+          registry,
+          contexts: [],
+          binding: {
+            ...binding,
+            component: (props: any) => Component({ ...props, data: data.value }),
+          },
+          title: composeTitle(listTitle, theme?.title),
+          path,
+          identity,
+          theme,
+          layout,
+        });
+        return c.html(html);
+      }
+
       const response = await runtime.dispatch('system', route.entity, 'read', readInput, identity);
 
       if (!response.ok) {
@@ -105,6 +141,41 @@ export function createPageHandler(config: PageHandlerConfig) {
         layout,
       });
 
+      return c.html(html);
+    }
+
+    // ADR-12d detail-view loader — same contract as list, route.id → params.id.
+    const detailLoader = binding.config.loader;
+    if (detailLoader) {
+      const data = await runLoader(detailLoader, {
+        runtime,
+        identity,
+        url,
+        request: c.req.raw,
+        params: { id: route.id ?? undefined },
+      });
+      if (!data.ok) {
+        return c.html(renderErrorPage(data.error), 500);
+      }
+      const Component = binding.component as any;
+      // Loader-driven detail views have no framework-fetched record to
+      // derive a title from, so the binding's config.title (if any) or
+      // the entity name is the best we can do here. Consumers who want
+      // a record-derived title should set the document title client-side.
+      const detailTitle = binding.config.title ?? route.entity;
+      const html = renderPage({
+        registry,
+        contexts: [],
+        binding: {
+          ...binding,
+          component: (props: any) => Component({ ...props, data: data.value }),
+        },
+        title: composeTitle(detailTitle, theme?.title),
+        path,
+        identity,
+        theme,
+        layout,
+      });
       return c.html(html);
     }
 
@@ -154,6 +225,52 @@ export function createPageHandler(config: PageHandlerConfig) {
 
     return c.html(html);
   };
+}
+
+// ── Binding loaders (ADR-124-12d) ──────────────────────────────────
+
+interface LoaderRuntimeContext {
+  readonly runtime: DispatchRuntime;
+  readonly identity: Identity;
+  readonly url: URL;
+  readonly request: Request;
+  readonly params: { readonly id?: string };
+}
+
+type LoaderResult = { ok: true; value: unknown } | { ok: false; error: string };
+
+/**
+ * Build the `LoaderContext` passed to a binding loader and invoke the
+ * loader. Returns a tagged result so the caller can render an error page
+ * without throwing. `read`/`dispatch` helpers thread `identity` into
+ * every call; the pipeline's policy concern enforces authorization as
+ * usual — loaders cannot bypass it.
+ */
+async function runLoader(loader: Loader, rctx: LoaderRuntimeContext): Promise<LoaderResult> {
+  const { runtime, identity, url, request, params } = rctx;
+  const ctx: LoaderContext = {
+    params,
+    identity,
+    url,
+    request,
+    async read(entity: string, input?: unknown): Promise<unknown> {
+      const res = await runtime.dispatch('system', entity, 'read', input, identity);
+      if (!res.ok) {
+        throw new Error(res.error?.message ?? `read ${entity} failed`);
+      }
+      return res.data;
+    },
+    dispatch(entity: string, operation: string, input?: unknown): Promise<DispatchResponse> {
+      return runtime.dispatch('system', entity, operation, input, identity);
+    },
+  };
+  try {
+    const value = await loader(ctx);
+    return { ok: true, value };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: msg };
+  }
 }
 
 /**
