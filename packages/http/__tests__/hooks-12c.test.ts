@@ -82,7 +82,7 @@ describe('theme hook', () => {
     expect(html).toContain('<title>tasks</title>');
   });
 
-  test('theme.title overrides document title on list views', async () => {
+  test('theme.title is appended to list-view title as site suffix', async () => {
     clearRegistry();
     app = await createApp({
       declarations: taskDecls(),
@@ -91,14 +91,10 @@ describe('theme hook', () => {
     });
     await seed(app, [{ title: 'A' }]);
 
-    // Detail pages set their own title from the record, so use list
     const res = await app.fetch(new Request('http://localhost/tasks'));
     const html = await res.text();
-    // List view currently sets its own title ("tasks") — but the default FALLBACK
-    // in renderDocument uses theme.title when binding doesn't provide one.
-    // The list view always provides `${entity}s`, so we don't expect override here.
-    // Assert theme.title is respected when binding-title is absent — covered by default test.
-    expect(html).toContain('<title>tasks</title>'); // list view's own title
+    // page-handler composes `${entityTitle} — ${theme.title}` when theme.title is set
+    expect(html).toContain('<title>tasks — Find My Next Bite</title>');
   });
 
   test('theme.css suppresses APP_STYLES, keeps CSS_RESET', async () => {

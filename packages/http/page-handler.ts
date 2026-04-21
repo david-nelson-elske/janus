@@ -93,7 +93,7 @@ export function createPageHandler(config: PageHandlerConfig) {
           ...binding,
           component: (props: any) => Component({ ...props, page, records: page.records }),
         },
-        title: `${route.entity}s`,
+        title: composeTitle(`${route.entity}s`, theme?.title),
         path,
         identity,
         theme,
@@ -133,7 +133,7 @@ export function createPageHandler(config: PageHandlerConfig) {
       registry,
       contexts: [ctx],
       binding,
-      title: String(record.title ?? route.entity),
+      title: composeTitle(String(record.title ?? record.name ?? route.entity), theme?.title),
       path,
       identity,
       theme,
@@ -142,6 +142,16 @@ export function createPageHandler(config: PageHandlerConfig) {
 
     return c.html(html);
   };
+}
+
+/**
+ * Compose a page-level `<title>` by concatenating the entity-specific title
+ * with the configured site name: `"Entity Page — Site Name"`. When theme.title
+ * is unset, returns just the entity title (pre-ADR-12c behavior).
+ */
+function composeTitle(entityTitle: string, siteTitle?: string): string {
+  if (!siteTitle) return entityTitle;
+  return `${entityTitle} — ${siteTitle}`;
 }
 
 // ── Query param parsing (ADR-124-12c §3) ───────────────────────────
