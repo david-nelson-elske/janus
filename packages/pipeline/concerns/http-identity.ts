@@ -202,9 +202,17 @@ async function resolveSessionCookie(ctx: ConcernContext, sessionToken: string): 
     const expiresAt = session._tokenExpiresAt as string | undefined;
     if (expiresAt && new Date(expiresAt).getTime() < Date.now()) return null;
 
+    // Use the cached OIDC roles stored on the session row at login time.
+    // Falling back to ['user'] would reduce a 'sysadmin' caller to 'user'
+    // and cause every subsequent system-tier write to fail with a
+    // confusing "requires a privileged role" error.
+    const sessionRoles = Array.isArray(session.roles)
+      ? (session.roles as unknown[]).filter((r): r is string => typeof r === 'string')
+      : ['user'];
+
     return Object.freeze({
       id: (session.identity_id as string) || (session.subject as string),
-      roles: Object.freeze(['user'] as readonly string[]),
+      roles: Object.freeze(sessionRoles as readonly string[]),
     });
   } catch {
     return null;
