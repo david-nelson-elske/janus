@@ -14,7 +14,14 @@
  */
 
 import { createBindingContext } from '@janus/client';
-import type { CompileResult, DispatchResponse, Identity, Loader, LoaderContext } from '@janus/core';
+import type {
+  BindingRequire,
+  CompileResult,
+  DispatchResponse,
+  Identity,
+  Loader,
+  LoaderContext,
+} from '@janus/core';
 import { ANONYMOUS } from '@janus/core';
 import type { DispatchRuntime } from '@janus/pipeline';
 import type { Context } from 'hono';
@@ -56,6 +63,31 @@ export function createPageHandler(config: PageHandlerConfig) {
     const binding = registry.bindingIndex.byEntityAndView(route.entity, route.view);
     if (!binding) {
       return c.notFound();
+    }
+
+    // ADR-12f: authorization check. Runs after identity resolution,
+    // before the loader / default read. Denying here short-circuits
+    // the request so we never fetch data the user can't see.
+    const requireFn = binding.config.require;
+    if (requireFn) {
+      const params = route.view === 'list' ? {} : { id: route.id ?? undefined };
+      const outcome = await runRequire(requireFn, {
+        runtime,
+        identity,
+        url,
+        request: c.req.raw,
+        params,
+      });
+      if (outcome.kind === 'redirect') {
+        return c.redirect(outcome.to);
+      }
+      if (outcome.kind === 'deny') {
+        return c.html(renderForbiddenPage(), 403);
+      }
+      if (outcome.kind === 'error') {
+        return c.html(renderErrorPage(outcome.message), 500);
+      }
+      // outcome.kind === 'allow' — fall through
     }
 
     // Load data through the dispatch pipeline
@@ -246,6 +278,56 @@ type LoaderResult = { ok: true; value: unknown } | { ok: false; error: string };
  * every call; the pipeline's policy concern enforces authorization as
  * usual — loaders cannot bypass it.
  */
+// ── Binding route policy (ADR-124-12f) ───────────────────────────
+
+type RequireOutcome =
+  | { kind: 'allow' }
+  | { kind: 'deny' }
+  | { kind: 'redirect'; to: string }
+  | { kind: 'error'; message: string };
+
+/**
+ * Build the LoaderContext-shaped ctx and invoke a binding's `require`
+ * check. Returns a tagged outcome so the caller can translate into
+ * the right HTTP response. `require` throwing is treated as a 500 —
+ * authorization code that crashes should not be interpreted as allow.
+ */
+async function runRequire(
+  requireFn: BindingRequire,
+  rctx: LoaderRuntimeContext,
+): Promise<RequireOutcome> {
+  const { runtime, identity, url, request, params } = rctx;
+  const ctx: LoaderContext = {
+    params,
+    identity,
+    url,
+    request,
+    async read(entity: string, input?: unknown): Promise<unknown> {
+      const res = await runtime.dispatch('system', entity, 'read', input, identity);
+      if (!res.ok) {
+        throw new Error(res.error?.message ?? `read ${entity} failed`);
+      }
+      return res.data;
+    },
+    dispatch(entity: string, operation: string, input?: unknown): Promise<DispatchResponse> {
+      return runtime.dispatch('system', entity, operation, input, identity);
+    },
+  };
+  let result;
+  try {
+    result = await requireFn(ctx);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { kind: 'error', message: msg };
+  }
+  if (result === true) return { kind: 'allow' };
+  if (result === false) return { kind: 'deny' };
+  if (result && typeof result === 'object' && typeof result.redirect === 'string') {
+    return { kind: 'redirect', to: result.redirect };
+  }
+  return { kind: 'error', message: 'binding require returned an invalid result' };
+}
+
 async function runLoader(loader: Loader, rctx: LoaderRuntimeContext): Promise<LoaderResult> {
   const { runtime, identity, url, request, params } = rctx;
   const ctx: LoaderContext = {
@@ -362,4 +444,10 @@ function renderErrorPage(message: string): string {
   return `<!DOCTYPE html>
 <html><head><title>Error</title></head>
 <body><h1>Error</h1><p>${escapeHtml(message)}</p></body></html>`;
+}
+
+function renderForbiddenPage(): string {
+  return `<!DOCTYPE html>
+<html><head><title>Forbidden</title></head>
+<body><h1>Forbidden</h1><p>You don't have access to this page.</p></body></html>`;
 }

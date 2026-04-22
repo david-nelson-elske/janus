@@ -82,6 +82,8 @@ export type {
   LoaderContext,
   Loader,
   BindingRenderMode,
+  BindingRequireResult,
+  BindingRequire,
 
   // Declaration
   DeclarationRecord,

@@ -410,6 +410,18 @@ export interface BindingConfig {
    *  one page). Without a loader, the handler still performs the default
    *  filtered read (list) or read-by-id (detail) as it did pre-12d. */
   readonly loader?: Loader;
+  /** Authorization check that runs before the loader / default read
+   *  (ADR-124-12f). Receives the same `LoaderContext` the loader does,
+   *  so it can consult the dispatch pipeline (e.g. resolve a member
+   *  record to verify a tier). Returns:
+   *    - `true` to proceed,
+   *    - `false` to render a 403 error page,
+   *    - `{ redirect }` to 302 to the given URL.
+   *
+   *  Identity policy for the common "require signed-in" and "require
+   *  active tier" patterns lives on the binding, not in hand-wired
+   *  middleware — so the rule travels with the view. */
+  readonly require?: BindingRequire;
   /** How the binding component sits inside the rendered document
    *  (ADR-124-12e).
    *
@@ -465,6 +477,26 @@ export interface LoaderContext {
 /** A binding loader. Runs before the component renders; its return value
  *  reaches the component as the `data` prop. */
 export type Loader<TData = unknown> = (ctx: LoaderContext) => Promise<TData>;
+
+// ── Binding route policy (ADR-124-12f) ──────────────────────────
+
+/** Result of a binding `require` check.
+ *  - `true` → authorization passes, request proceeds to loader/component.
+ *  - `false` → deny with a 403 error page.
+ *  - `{ redirect }` → deny and redirect to the given URL (commonly
+ *    `/login` for unauthenticated or `/activate` for inactive tiers). */
+export type BindingRequireResult =
+  | true
+  | false
+  | { readonly redirect: string };
+
+/** A binding authorization check. Runs after identity resolution and
+ *  before the loader (or default read) fires. Receives the same context
+ *  as a loader so it can consult the dispatch pipeline when needed
+ *  (e.g. resolving a member record to check a tier). Async is allowed. */
+export type BindingRequire = (
+  ctx: LoaderContext,
+) => BindingRequireResult | Promise<BindingRequireResult>;
 
 export interface BindingRecord {
   readonly source: string;
