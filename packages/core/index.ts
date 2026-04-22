@@ -96,6 +96,7 @@ export type {
   Identity,
   ScopeAssignment,
   ScopeConfig,
+  StoreScope,
 
   // Pipeline
   PipelineStage,

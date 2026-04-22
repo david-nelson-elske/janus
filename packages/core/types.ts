@@ -134,6 +134,35 @@ export type ScopeConfig =
   | { readonly tier: 'province'; readonly field: string; readonly bypassRoles?: readonly string[] }
   | { readonly tier: 'mixed'; readonly field: string; readonly bypassRoles?: readonly string[] };
 
+/**
+ * Caller-scope argument passed with every store op (balcony-solar Phase 1).
+ *
+ * Distinct from `ScopeConfig` above: `ScopeConfig` declares how an *entity*'s rows
+ * are scoped (a framework-level, per-entity property). `StoreScope` declares how
+ * the *caller* is acting — what country/region/campaign they are authorised to
+ * touch on this particular dispatch. `scope-enforce` combines the two.
+ *
+ * Three admissible forms:
+ *   - Full structured scope (typical admin session, per D-02)
+ *   - Plural campaignIds (multi-campaign federal-peer reads, per D-04)
+ *   - 'system' sentinel (allowlisted bootstrappers only, per D-05/D-06; the
+ *     file-path allowlist is enforced by a CI grep check, not the runtime)
+ */
+export type StoreScope =
+  | {
+      readonly country: string;
+      readonly region?: string | null;
+      readonly locality?: string | null;
+      readonly campaignId: string;
+      readonly tier: 'federal' | 'regional' | 'municipal';
+    }
+  | {
+      readonly country: string;
+      readonly campaignIds: readonly string[];
+      readonly tier: 'federal';
+    }
+  | 'system';
+
 export interface GraphNodeRecord {
   readonly name: string;
   readonly origin: Origin;
@@ -150,6 +179,12 @@ export interface GraphNodeRecord {
   readonly transitionTargets: readonly TransitionTarget[];
   readonly indexes?: readonly IndexConfig[];
   readonly evolve?: EvolveConfig;
+  /**
+   * Natural-key field list surfaced from `DefineConfig` (balcony-solar Phase 1,
+   * D-26). Consumers read this via `app.registry.entity(name).naturalKey` — the
+   * seed upsert helper uses it to choose between create and update.
+   */
+  readonly naturalKey?: readonly string[];
 }
 
 export interface DefineConfig {
@@ -174,6 +209,17 @@ export interface DefineConfig {
   readonly indexes?: readonly IndexConfig[];
   /** Schema evolution hints for migration (ADR 04c). Ephemeral — remove after migration. */
   readonly evolve?: EvolveConfig;
+  /**
+   * Natural-key field list (balcony-solar Phase 1, D-26). When present, the seed
+   * upsert helper (`src/seed/upsert.ts`) uses these fields to look up existing
+   * rows before deciding between create and update. Propagated to the entity's
+   * `GraphNodeRecord` so callers can read it via `app.registry.entity(name).naturalKey`.
+   *
+   * Example: `naturalKey: ['slug']` for reference entities,
+   *          `naturalKey: ['claim', 'category']` for content entities with
+   *          compound natural identity.
+   */
+  readonly naturalKey?: readonly string[];
 }
 
 export interface DefineResult {
@@ -554,6 +600,20 @@ export interface ScopeAssignment {
   readonly scope: string;
   /** Optional: the role granted within this scope. Apps can use this to drive policy. */
   readonly role?: string;
+  /**
+   * Campaign id this assignment grants access to (balcony-solar Phase 1, FND-03a).
+   * Post-Phase-1 `sessionToIdentity` emits this alongside `scope` so the new
+   * `StoreScope`-based authorisation can resolve the caller's allowed campaigns
+   * without inferring them from region slugs. Optional to preserve compatibility
+   * with existing consumers whose assignments carry a region slug only.
+   */
+  readonly campaignId?: string;
+  /** Country the assignment is bounded by (balcony-solar Phase 1). Optional; used by hierarchy walk. */
+  readonly country?: string;
+  /** Region the assignment is bounded by (balcony-solar Phase 1). Null for federal assignments. */
+  readonly region?: string | null;
+  /** Locality the assignment is bounded by (balcony-solar Phase 1). Null for federal/regional assignments. */
+  readonly locality?: string | null;
 }
 
 export interface Identity {
@@ -642,6 +702,12 @@ export interface ReadParams {
   readonly offset?: number;
   readonly includeDeleted?: boolean;
   readonly search?: string;
+  /**
+   * Caller-scope argument (balcony-solar Phase 1, D-01..D-06). Optional at the
+   * type level per D-08 (type-level enforcement deferred); `scope-enforce`
+   * throws `auth-error` at runtime when absent on non-allowlisted call sites.
+   */
+  readonly scope?: StoreScope;
 }
 
 export type SortDirection = 'asc' | 'desc';

@@ -258,6 +258,10 @@ export function define(name: string, config: DefineConfig): DefineResult {
     transitionTargets,
     indexes: config.indexes,
     evolve: config.evolve,
+    // naturalKey — propagated through to GraphNodeRecord so consumers
+    // (e.g. balcony-solar's seed upsert helper) can read it via
+    // app.registry.entity(name).naturalKey. Additive (D-26).
+    naturalKey: config.naturalKey,
   };
 
   return deepFreeze({ kind: 'define' as const, record });
