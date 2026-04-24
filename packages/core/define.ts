@@ -262,6 +262,12 @@ export function define(name: string, config: DefineConfig): DefineResult {
     // (e.g. balcony-solar's seed upsert helper) can read it via
     // app.registry.entity(name).naturalKey. Additive (D-26).
     naturalKey: config.naturalKey,
+    // writeTiers + writeFieldGuard — propagated through to GraphNodeRecord
+    // so scope-enforce can read them via app.registry.entity(name).writeTiers
+    // / .writeFieldGuard at write-op dispatch time. Additive (balcony-solar
+    // Phase 3, D-22..D-25). Unset preserves pre-Phase-3 behaviour.
+    writeTiers: config.writeTiers,
+    writeFieldGuard: config.writeFieldGuard,
   };
 
   return deepFreeze({ kind: 'define' as const, record });

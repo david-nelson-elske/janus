@@ -185,6 +185,23 @@ export interface GraphNodeRecord {
    * seed upsert helper uses it to choose between create and update.
    */
   readonly naturalKey?: readonly string[];
+  /**
+   * Entity-declared write-tier allowlist surfaced from `DefineConfig`
+   * (balcony-solar Phase 3, D-22 + D-23). When present, scope-enforce denies
+   * non-system create/update/delete calls whose caller-scope tier is not in
+   * this list. Consumers read this via `app.registry.entity(name).writeTiers`.
+   */
+  readonly writeTiers?: readonly ('federal' | 'regional' | 'municipal' | 'system')[];
+  /**
+   * Entity-declared field-level write guard surfaced from `DefineConfig`
+   * (balcony-solar Phase 3, D-24 + D-25). Invoked inside scope-enforce on
+   * non-system create/update calls. Guard throws auth-error naming the
+   * denied field. Consumers read this via `app.registry.entity(name).writeFieldGuard`.
+   */
+  readonly writeFieldGuard?: (
+    input: Record<string, unknown>,
+    scope: StoreScope,
+  ) => void;
 }
 
 export interface DefineConfig {
@@ -220,6 +237,29 @@ export interface DefineConfig {
    *          compound natural identity.
    */
   readonly naturalKey?: readonly string[];
+  /**
+   * When set, non-system create/update/delete calls require the caller's
+   * scope tier to appear in writeTiers. Read operations are unaffected.
+   *
+   * Consumer: balcony-solar Phase 3 (D-22, D-23). Editorial + national-
+   * messaging entities declare `writeTiers: ['federal','system']` so only
+   * federal-tier scopes and the 'system' sentinel can write; regional /
+   * municipal callers are denied. Unset preserves pre-Phase-3 behaviour.
+   */
+  readonly writeTiers?: readonly ('federal' | 'regional' | 'municipal' | 'system')[];
+  /**
+   * Field-level write guard. Invoked inside scope-enforce on create/update
+   * when the scope tier is not in the entity's privileged set. The guard
+   * MUST throw an auth-error (shape: Object.assign(new Error(...), { kind: 'auth-error', retryable: false }))
+   * naming the specific denied field. Signature is narrow by design — only
+   * one entity (provincial_campaign) opts in this phase. If future entities
+   * need field-level denial, promote to a first-class `deniedFieldsForTier`
+   * declaration rather than adding a second lambda.
+   */
+  readonly writeFieldGuard?: (
+    input: Record<string, unknown>,
+    scope: StoreScope,
+  ) => void;
 }
 
 export interface DefineResult {

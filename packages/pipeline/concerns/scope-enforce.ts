@@ -367,6 +367,34 @@ export const scopeEnforce: ExecutionHandler = async (ctx) => {
   }
 
   if (callerScope && typeof callerScope === 'object') {
+    // ── writeTiers + writeFieldGuard gate (balcony-solar Phase 3, D-22..D-25) ──
+    // Applies to all non-system tiers on write ops. Placed BEFORE the per-tier
+    // branches so federal, regional, AND municipal callers are all subject to
+    // the entity-declared write-tier allowlist; only the 'system' sentinel
+    // (handled by the string-scope early return above) bypasses. This preserves
+    // the "scope-enforce is the sole authorization gate" invariant from Phase 1
+    // by making the guard a sub-rule of scope-enforce, not a separate concern.
+    if (operation === 'create' || operation === 'update' || operation === 'delete') {
+      const callerTier =
+        'tier' in callerScope ? callerScope.tier : undefined;
+      if (callerTier !== undefined) {
+        const writeTiers = (entity as any)?.writeTiers as readonly string[] | undefined;
+        if (writeTiers && !writeTiers.includes(callerTier)) {
+          denied(
+            `Access denied: ${operation} on '${ctx.entity}' requires write tier in [${writeTiers.join(', ')}]; caller tier is '${callerTier}'`,
+          );
+        }
+
+        const fieldGuard = (entity as any)?.writeFieldGuard as
+          | ((input: Record<string, unknown>, scope: StoreScope) => void)
+          | undefined;
+        if (fieldGuard) {
+          // Guard throws auth-error if denied; let it propagate.
+          fieldGuard(input, callerScope);
+        }
+      }
+    }
+
     enforceStructuredScope(callerScope, identity, ctx.entity, operation, input, ctx);
     return;
   }
