@@ -366,6 +366,17 @@ export const scopeEnforce: ExecutionHandler = async (ctx) => {
     return;
   }
 
+  // ── bypass-role check (honors the documented contract at line 46) ──
+  // The legacy entity-ScopeConfig branch already calls `isBypassed` below;
+  // the structured-caller-scope branch also needs to honor it so the
+  // sysadmin role works on entities that use structured StoreScope (the
+  // path balcony-solar Phase 8 introduced for materialized tasks).
+  // Without this, a sysadmin dispatching `task:create` with a structured
+  // scope is denied because their session has no per-region assignments.
+  if (entity?.scope && isBypassed(identity.roles ?? [], entity.scope)) {
+    return;
+  }
+
   if (callerScope && typeof callerScope === 'object') {
     // ── writeTiers + writeFieldGuard gate (balcony-solar Phase 3, D-22..D-25) ──
     // Applies to all non-system tiers on write ops. Placed BEFORE the per-tier
