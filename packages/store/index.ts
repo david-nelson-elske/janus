@@ -27,10 +27,30 @@ export type { ColumnInfo, SchemaDiff, PgFtsSetup, TypeResolver } from './schema-
 export { RelationalOps, jsonFieldNames, deserializeRow, applyWhereClause } from './relational-ops';
 export type { DialectOps } from './relational-ops';
 export { createMemoryAdapter } from './memory-adapter';
+export type { MemoryAdapterConfig } from './memory-adapter';
 export { createSqliteAdapter } from './sqlite-adapter';
 export type { SqliteAdapterConfig } from './sqlite-adapter';
 export { createPostgresAdapter } from './postgres-adapter';
 export type { PostgresAdapterConfig } from './postgres-adapter';
+
+// Translatable field support (ADR 125-00)
+export {
+  expandTranslatableColumns,
+  resolveTranslatableConfig,
+  rewriteReadRecord,
+  rewriteWhereClause,
+  rewriteWriteRecord,
+  translatableFieldNames,
+} from './translatable-helpers';
+export type {
+  ResolvedTranslatableConfig,
+  TranslatableConfig,
+} from './translatable-helpers';
+export { addLanguageColumn } from './migrations/add-language-column';
+export type {
+  AddLanguageColumnConfig,
+  AddLanguageColumnResult,
+} from './migrations/add-language-column';
 export type { ReconcilableAdapter } from './store-adapter';
 export { createDerivedAdapter } from './derived-adapter';
 export type { DerivedAdapterConfig } from './derived-adapter';

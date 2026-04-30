@@ -17,18 +17,35 @@ import { StoreException, entityNotFound, versionConflict } from './errors';
 import type { WhereClause } from './filter';
 import { matchesWhere, compareValues } from './filter';
 import { useSoftDelete } from './adapter-utils';
+import {
+  type ResolvedTranslatableConfig,
+  type TranslatableConfig,
+  resolveTranslatableConfig,
+  rewriteReadRecord,
+  rewriteWhereClause,
+  rewriteWriteRecord,
+} from './translatable-helpers';
 
 const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 1000;
 
 import type { ReconcilableAdapter } from './store-adapter';
 
-export function createMemoryAdapter(): ReconcilableAdapter {
-  return new MemoryAdapter();
+export interface MemoryAdapterConfig {
+  readonly translatable?: TranslatableConfig;
+}
+
+export function createMemoryAdapter(config?: MemoryAdapterConfig): ReconcilableAdapter {
+  return new MemoryAdapter(resolveTranslatableConfig(config?.translatable));
 }
 
 class MemoryAdapter implements ReconcilableAdapter {
   private tables = new Map<string, Map<string, EntityRecord>>();
+  private readonly translatable: ResolvedTranslatableConfig | null;
+
+  constructor(translatable: ResolvedTranslatableConfig | null) {
+    this.translatable = translatable;
+  }
 
   private getTable(entity: string): Map<string, EntityRecord> {
     let table = this.tables.get(entity);
@@ -73,6 +90,8 @@ class MemoryAdapter implements ReconcilableAdapter {
   // ── Read ─────────────────────────────────────────────────────
 
   async read(meta: AdapterMeta, params?: ReadParams): Promise<EntityRecord | ReadPage> {
+    const lang = params?.lang;
+
     // Single record by id
     if (params?.id) {
       const record = this.getTable(meta.entity).get(params.id) ?? null;
@@ -80,7 +99,7 @@ class MemoryAdapter implements ReconcilableAdapter {
       if (useSoftDelete(meta) && record._deletedAt && !params.includeDeleted) {
         throw entityNotFound(meta.entity, params.id);
       }
-      return record;
+      return rewriteReadRecord(record, meta.schema, this.translatable, lang) as EntityRecord;
     }
 
     // Filtered list
@@ -91,9 +110,15 @@ class MemoryAdapter implements ReconcilableAdapter {
       records = records.filter((r) => !r._deletedAt);
     }
 
-    // Where clause
+    // Where clause — translatable refs rewritten to active-lang columns
     if (params?.where) {
-      records = records.filter((r) => matchesWhere(r, params.where! as WhereClause));
+      const where = rewriteWhereClause(
+        params.where as Record<string, unknown>,
+        meta.schema,
+        this.translatable,
+        lang,
+      );
+      records = records.filter((r) => matchesWhere(r, where as WhereClause));
     }
 
     const total = records.length;
@@ -113,7 +138,9 @@ class MemoryAdapter implements ReconcilableAdapter {
     // Offset pagination
     const limit = Math.min(params?.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
     const offset = params?.offset ?? 0;
-    const page = records.slice(offset, offset + limit);
+    const page = records.slice(offset, offset + limit).map(
+      (r) => rewriteReadRecord(r, meta.schema, this.translatable, lang) as EntityRecord,
+    );
     const hasMore = offset + limit < records.length;
 
     return { records: page, total, hasMore, offset, limit };
@@ -122,15 +149,21 @@ class MemoryAdapter implements ReconcilableAdapter {
   // ── Write ────────────────────────────────────────────────────
 
   async create(meta: AdapterMeta, record: NewEntityRecord): Promise<EntityRecord> {
+    // Strip the `__lang` write hint and rewrite translatable bare-field
+    // values to their `<field>_<lang>` storage column when writing in a
+    // non-default language.
+    const { __lang: writeLang, ...rest } = record as Record<string, unknown> & { __lang?: string };
+    const rewritten = rewriteWriteRecord(rest, meta.schema, this.translatable, writeLang);
+
     const now = new Date().toISOString();
     const full: EntityRecord = {
-      ...record,
-      id: record.id ?? crypto.randomUUID(),
+      ...rewritten,
+      id: (rewritten.id as string | undefined) ?? crypto.randomUUID(),
       _version: 1,
       createdAt: now,
-      createdBy: (record.createdBy as string) ?? 'system',
+      createdBy: (rewritten.createdBy as string) ?? 'system',
       updatedAt: now,
-      updatedBy: (record.updatedBy as string) ?? 'system',
+      updatedBy: (rewritten.updatedBy as string) ?? 'system',
     };
     const table = this.getTable(meta.entity);
     if (table.has(full.id)) {
@@ -155,15 +188,17 @@ class MemoryAdapter implements ReconcilableAdapter {
       throw versionConflict(meta.entity, id, options.expectedVersion, existing._version);
     }
 
+    const rewritten = rewriteWriteRecord(patch, meta.schema, this.translatable, options?.lang);
+
     const updated: EntityRecord = {
       ...existing,
-      ...patch,
+      ...rewritten,
       id: existing.id,
       createdAt: existing.createdAt,
       createdBy: existing.createdBy,
       _version: existing._version + 1,
       updatedAt: new Date().toISOString(),
-      updatedBy: (patch.updatedBy as string) ?? existing.updatedBy,
+      updatedBy: (rewritten.updatedBy as string) ?? existing.updatedBy,
     };
     table.set(id, updated);
     return updated;

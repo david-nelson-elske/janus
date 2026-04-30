@@ -16,7 +16,7 @@
  * calling shared assembleDispatchIndex() internals.
  */
 
-import { isRelation, isReference, isMention, isSemanticField, isLifecycle, isWiringType } from '@janus/vocabulary';
+import { isRelation, isReference, isMention, isSemanticField, isLifecycle, isWiringType, isTranslatableField } from '@janus/vocabulary';
 import type { StorageStrategy, WiringEffects, RelationField, ReferenceField } from '@janus/vocabulary';
 
 import type {
@@ -395,23 +395,33 @@ function buildQueryFields(entity: string, graphNodes: Map<string, GraphNodeRecor
     let type: string;
     let operators: readonly string[];
     let required = false;
+    let translatable = false;
 
-    if (isSemanticField(def)) {
-      type = def.kind;
-      operators = OPERATORS_BY_TYPE[def.kind] ?? DEFAULT_OPERATORS;
-      required = !!def.hints?.required;
-    } else if (isLifecycle(def)) {
+    // Translatable fields wrap a base semantic field. For the query layer
+    // they behave like the base — same operators, same required flag — but
+    // we surface a `translatable` marker so downstream tooling (e.g. agent
+    // tool descriptors) can render lang-aware UI.
+    const inner = isTranslatableField(def) ? def.base : def;
+    if (isTranslatableField(def)) translatable = true;
+
+    if (isSemanticField(inner)) {
+      type = inner.kind;
+      operators = OPERATORS_BY_TYPE[inner.kind] ?? DEFAULT_OPERATORS;
+      required = !!inner.hints?.required;
+    } else if (isLifecycle(inner)) {
       type = 'lifecycle';
       operators = OPERATORS_BY_TYPE.lifecycle ?? DEFAULT_OPERATORS;
-    } else if (isWiringType(def)) {
-      type = def.kind;
-      operators = OPERATORS_BY_TYPE[def.kind] ?? DEFAULT_OPERATORS;
+    } else if (isWiringType(inner)) {
+      type = inner.kind;
+      operators = OPERATORS_BY_TYPE[inner.kind] ?? DEFAULT_OPERATORS;
     } else {
       type = 'unknown';
       operators = DEFAULT_OPERATORS;
     }
 
-    fields.push(Object.freeze({ entity, field: name, type, operators, required }));
+    fields.push(
+      Object.freeze({ entity, field: name, type, operators, required, translatable }),
+    );
   }
 
   return Object.freeze(fields);

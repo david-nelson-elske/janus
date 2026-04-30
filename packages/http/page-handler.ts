@@ -23,6 +23,7 @@ import type {
   LoaderContext,
 } from '@janus/core';
 import { ANONYMOUS } from '@janus/core';
+import type { I18nInstance, Translator } from '@janus/i18n';
 import type { DispatchRuntime } from '@janus/pipeline';
 import type { Context } from 'hono';
 import { getCookie } from 'hono/cookie';
@@ -36,13 +37,14 @@ export interface PageHandlerConfig {
   readonly runtime: DispatchRuntime;
   readonly theme?: ThemeConfig;
   readonly layout?: LayoutConfig;
+  readonly i18n?: I18nInstance;
 }
 
 /**
  * Create a Hono handler that serves SSR pages for entity views.
  */
 export function createPageHandler(config: PageHandlerConfig) {
-  const { registry, runtime, theme, layout } = config;
+  const { registry, runtime, theme, layout, i18n } = config;
 
   return async (c: Context) => {
     const url = new URL(c.req.url);
@@ -52,6 +54,10 @@ export function createPageHandler(config: PageHandlerConfig) {
     if (!route) {
       return c.notFound();
     }
+
+    // Pull active lang + translator from i18n middleware context.
+    const lang: string | undefined = c.get('lang') ?? i18n?.defaultLang;
+    const t: Translator | undefined = c.get('t');
 
     // Resolve identity from session cookie, fall back to ANONYMOUS
     let identity: Identity = ANONYMOUS;
@@ -129,7 +135,15 @@ export function createPageHandler(config: PageHandlerConfig) {
         return c.html(html);
       }
 
-      const response = await runtime.dispatch('system', route.entity, 'read', readInput, identity);
+      // Thread the active lang into the read input so the store adapter
+      // resolves `Translatable<T>` fields against the request language.
+      const response = await runtime.dispatch(
+        'system',
+        route.entity,
+        'read',
+        { ...readInput, lang },
+        identity,
+      );
 
       if (!response.ok) {
         return c.html(renderErrorPage(response.error?.message ?? 'Failed to load data'), 500);
@@ -171,6 +185,9 @@ export function createPageHandler(config: PageHandlerConfig) {
         identity,
         theme,
         layout,
+        lang,
+        t,
+        i18n,
       });
 
       return c.html(html);
@@ -207,16 +224,19 @@ export function createPageHandler(config: PageHandlerConfig) {
         identity,
         theme,
         layout,
+        lang,
+        t,
+        i18n,
       });
       return c.html(html);
     }
 
-    // Detail view — read single record
+    // Detail view — read single record (with active-language resolution).
     const response = await runtime.dispatch(
       'system',
       route.entity,
       'read',
-      { id: route.id },
+      { id: route.id, lang },
       identity,
     );
 

@@ -7,6 +7,6 @@
     ".": "./index.ts"
   },
   "janus": {
-    "tier": "source",
+    "tier": "source"
   }
 }

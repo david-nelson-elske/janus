@@ -15,6 +15,12 @@ import type { WhereClause } from './filter';
 import { entityNotFound, versionConflict } from './errors';
 import { tableName } from './schema-gen';
 import { useSoftDelete } from './adapter-utils';
+import {
+  type ResolvedTranslatableConfig,
+  rewriteReadRecord,
+  rewriteWhereClause,
+  rewriteWriteRecord,
+} from './translatable-helpers';
 
 const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 1000;
@@ -144,6 +150,7 @@ export class RelationalOps {
     private metaMap: Map<string, AdapterMeta>,
     private ftsEntities: Set<string>,
     private dialect: DialectOps,
+    private translatable: ResolvedTranslatableConfig | null = null,
   ) {}
 
   private jf(meta: AdapterMeta): Set<string> {
@@ -153,6 +160,18 @@ export class RelationalOps {
   async read(meta: AdapterMeta, params?: ReadParams): Promise<EntityRecord | ReadPage> {
     const tbl = tableName(meta.entity);
     const jf = this.jf(meta);
+    const lang = params?.lang;
+
+    // Translatable where rewrite — `{ title: ... }` becomes `{ title_fr: ... }`
+    // when lang ≠ default so filters hit the active-lang column.
+    const where = params?.where
+      ? rewriteWhereClause(
+          params.where as Record<string, unknown>,
+          meta.schema,
+          this.translatable,
+          lang,
+        )
+      : undefined;
 
     // Single record by id
     if (params?.id) {
@@ -167,7 +186,7 @@ export class RelationalOps {
       if (useSoftDelete(meta) && record._deletedAt && !params.includeDeleted) {
         throw entityNotFound(meta.entity, params.id);
       }
-      return record;
+      return rewriteReadRecord(record, meta.schema, this.translatable, lang) as EntityRecord;
     }
 
     // Filtered list
@@ -179,8 +198,8 @@ export class RelationalOps {
     }
 
     // Where clause
-    if (params?.where) {
-      q = applyWhereClause(q, params.where as WhereClause);
+    if (where) {
+      q = applyWhereClause(q, where as WhereClause);
     }
 
     // FTS search (dialect-specific)
@@ -193,8 +212,8 @@ export class RelationalOps {
     if (useSoftDelete(meta) && !params?.includeDeleted) {
       countQ = countQ.where('_deletedAt', 'is', null);
     }
-    if (params?.where) {
-      countQ = applyWhereClause(countQ, params.where as WhereClause);
+    if (where) {
+      countQ = applyWhereClause(countQ, where as WhereClause);
     }
     if (params?.search && this.ftsEntities.has(meta.entity)) {
       countQ = this.dialect.applyFtsFilter(countQ, tbl, params.search);
@@ -216,7 +235,11 @@ export class RelationalOps {
     q = q.limit(limit).offset(offset);
 
     const rows = await q.execute();
-    const records = (rows as Record<string, unknown>[]).map((r) => deserializeRow(r, jf));
+    const records = (rows as Record<string, unknown>[])
+      .map((r) => deserializeRow(r, jf))
+      .map(
+        (r) => rewriteReadRecord(r, meta.schema, this.translatable, lang) as EntityRecord,
+      );
     const hasMore = offset + limit < total;
 
     return { records, total, hasMore, offset, limit };
@@ -227,14 +250,19 @@ export class RelationalOps {
     const jf = this.jf(meta);
     const now = new Date().toISOString();
 
+    // Strip `__lang` write hint and rewrite bare translatable values to
+    // `<field>_<lang>` columns when writing in a non-default language.
+    const { __lang: writeLang, ...rest } = record as Record<string, unknown> & { __lang?: string };
+    const rewritten = rewriteWriteRecord(rest, meta.schema, this.translatable, writeLang);
+
     const full: Record<string, unknown> = {
-      ...record,
-      id: record.id ?? crypto.randomUUID(),
+      ...rewritten,
+      id: (rewritten.id as string | undefined) ?? crypto.randomUUID(),
       _version: 1,
       createdAt: now,
-      createdBy: (record.createdBy as string) ?? 'system',
+      createdBy: (rewritten.createdBy as string) ?? 'system',
       updatedAt: now,
-      updatedBy: (record.updatedBy as string) ?? 'system',
+      updatedBy: (rewritten.updatedBy as string) ?? 'system',
     };
 
     await this.db.insertInto(tbl).values(this.dialect.serializeRow(full, jf)).execute();
@@ -265,8 +293,15 @@ export class RelationalOps {
       throw versionConflict(meta.entity, id, options.expectedVersion, deserialized._version);
     }
 
+    const rewrittenPatch = rewriteWriteRecord(
+      patch,
+      meta.schema,
+      this.translatable,
+      options?.lang,
+    );
+
     const updated: Record<string, unknown> = {
-      ...patch,
+      ...rewrittenPatch,
       _version: deserialized._version + 1,
       updatedAt: new Date().toISOString(),
     };

@@ -20,9 +20,15 @@ import { reconcileSchema } from './schema-reconcile';
 import type { ReconciliationReport } from './schema-reconcile';
 import { RelationalOps, jsonFieldNames } from './relational-ops';
 import type { DialectOps } from './relational-ops';
+import {
+  type ResolvedTranslatableConfig,
+  type TranslatableConfig,
+  resolveTranslatableConfig,
+} from './translatable-helpers';
 
 export interface SqliteAdapterConfig {
   readonly path: string;
+  readonly translatable?: TranslatableConfig;
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: Kysely generic DB type
@@ -112,6 +118,7 @@ class SqliteAdapterImpl implements StoreAdapter, TransactionalAdapter {
   private ops: RelationalOps;
   private snapshotStore: SchemaSnapshotStore;
   private snapshotStoreReady = false;
+  private translatable: ResolvedTranslatableConfig | null;
 
   constructor(config: SqliteAdapterConfig) {
     const Database = require('bun:sqlite').Database;
@@ -124,7 +131,14 @@ class SqliteAdapterImpl implements StoreAdapter, TransactionalAdapter {
     this.db = new Kysely({
       dialect: new SqliteDialect({ database: wrapBunSqlite(database) }),
     });
-    this.ops = new RelationalOps(this.db, this.metaMap, this.ftsEntities, sqliteDialect);
+    this.translatable = resolveTranslatableConfig(config.translatable);
+    this.ops = new RelationalOps(
+      this.db,
+      this.metaMap,
+      this.ftsEntities,
+      sqliteDialect,
+      this.translatable,
+    );
     this.snapshotStore = createSchemaSnapshotStore(this.db);
   }
 
@@ -149,14 +163,16 @@ class SqliteAdapterImpl implements StoreAdapter, TransactionalAdapter {
     // Reconcile if there are existing snapshots or drops to process
     let report: ReconciliationReport | null = null;
     if (knownEntities.size > 0 || (drops && drops.size > 0)) {
-      report = await reconcileSchema(this.db, metas, this.snapshotStore, drops);
+      report = await reconcileSchema(this.db, metas, this.snapshotStore, drops, this.translatable);
     }
 
     // Create tables for genuinely new entities (not in snapshot)
     for (const meta of metas) {
       if (!knownEntities.has(meta.entity)) {
-        await sql.raw(generateCreateTable(meta)).execute(this.db);
-        await this.snapshotStore.writeSnapshot(generateSnapshot(meta));
+        await sql.raw(generateCreateTable(meta, this.translatable)).execute(this.db);
+        await this.snapshotStore.writeSnapshot(
+          generateSnapshot(meta, undefined, this.translatable),
+        );
       }
     }
 
@@ -244,7 +260,13 @@ class SqliteAdapterImpl implements StoreAdapter, TransactionalAdapter {
 
   async withTransaction<T>(fn: (adapter: StoreAdapter) => Promise<T>): Promise<T> {
     return this.db.transaction().execute(async (trx) => {
-      const txOps = new RelationalOps(trx as unknown as DB, this.metaMap, this.ftsEntities, sqliteDialect);
+      const txOps = new RelationalOps(
+        trx as unknown as DB,
+        this.metaMap,
+        this.ftsEntities,
+        sqliteDialect,
+        this.translatable,
+      );
       const txAdapter: StoreAdapter = {
         initialize: async () => {},
         read: (meta, params) => txOps.read(meta, params),

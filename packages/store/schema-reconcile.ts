@@ -65,6 +65,7 @@ export function classifyChanges(
   snapshots: readonly EntitySnapshot[],
   evolveConfigs: ReadonlyMap<string, EvolveConfig>,
   drops: ReadonlySet<string>,
+  translatable?: import('./translatable-helpers').ResolvedTranslatableConfig | null,
 ): ReconciliationPlan {
   const snapshotMap = new Map(snapshots.map((s) => [s.entity, s]));
   const currentMap = new Map(current.map((m) => [m.entity, m]));
@@ -102,7 +103,7 @@ export function classifyChanges(
   for (const meta of current) {
     const snapshot = snapshotMap.get(meta.entity);
     if (!snapshot) continue;
-    classifyEntityChanges(meta, snapshot, evolveConfigs.get(meta.entity), changes);
+    classifyEntityChanges(meta, snapshot, evolveConfigs.get(meta.entity), changes, translatable);
   }
 
   const safe = changes.filter((c) => c.tier === 'safe');
@@ -123,9 +124,10 @@ function classifyEntityChanges(
   snapshot: EntitySnapshot,
   evolve: EvolveConfig | undefined,
   changes: SchemaChange[],
+  translatable?: import('./translatable-helpers').ResolvedTranslatableConfig | null,
 ): void {
   const snapshotFields = new Map(snapshot.fields.map((f) => [f.name, f]));
-  const desiredSnapshot = generateSnapshot(meta);
+  const desiredSnapshot = generateSnapshot(meta, undefined, translatable);
   const desiredFields = new Map(desiredSnapshot.fields.map((f) => [f.name, f]));
 
   // Build rename lookup: new name → old name
@@ -295,15 +297,16 @@ interface ApplyContext {
   readonly change: SchemaChange;
   readonly meta?: AdapterMeta;
   readonly evolve?: EvolveConfig;
+  readonly translatable?: import('./translatable-helpers').ResolvedTranslatableConfig | null;
 }
 
 async function applyChange(ctx: ApplyContext): Promise<void> {
-  const { db, change, meta, evolve } = ctx;
+  const { db, change, meta, evolve, translatable } = ctx;
   const table = tableName(change.entity);
 
   switch (change.kind) {
     case 'add-column': {
-      const snap = meta ? generateSnapshot(meta) : null;
+      const snap = meta ? generateSnapshot(meta, undefined, translatable) : null;
       const field = snap?.fields.find((f) => f.name === change.field);
       const sqlType = field?.sqlType ?? 'TEXT';
       const backfillValue = evolve?.backfills?.[change.field!];
@@ -376,6 +379,7 @@ async function executeChangesAndUpdateSnapshots(
   metas: readonly AdapterMeta[],
   snapshotStore: SchemaSnapshotStore,
   drops?: ReadonlySet<string>,
+  translatable?: import('./translatable-helpers').ResolvedTranslatableConfig | null,
 ): Promise<ReconciliationReport> {
   if (!plan.canAutoApply) {
     throw new SchemaReconciliationError(plan);
@@ -386,12 +390,12 @@ async function executeChangesAndUpdateSnapshots(
 
   for (const change of plan.changes) {
     const meta = metaMap.get(change.entity);
-    await applyChange({ db, change, meta, evolve: meta?.evolve });
+    await applyChange({ db, change, meta, evolve: meta?.evolve, translatable });
     applied.push(change);
   }
 
   for (const meta of metas) {
-    await snapshotStore.writeSnapshot(generateSnapshot(meta));
+    await snapshotStore.writeSnapshot(generateSnapshot(meta, undefined, translatable));
   }
 
   if (drops) {
@@ -422,10 +426,17 @@ export async function reconcileSchema(
   metas: readonly AdapterMeta[],
   snapshotStore: SchemaSnapshotStore,
   drops?: ReadonlySet<string>,
+  translatable?: import('./translatable-helpers').ResolvedTranslatableConfig | null,
 ): Promise<ReconciliationReport> {
   const snapshots = await snapshotStore.readAllSnapshots();
-  const plan = classifyChanges(metas, snapshots, buildEvolveConfigs(metas), drops ?? new Set());
-  return executeChangesAndUpdateSnapshots(db, plan, metas, snapshotStore, drops);
+  const plan = classifyChanges(
+    metas,
+    snapshots,
+    buildEvolveConfigs(metas),
+    drops ?? new Set(),
+    translatable,
+  );
+  return executeChangesAndUpdateSnapshots(db, plan, metas, snapshotStore, drops, translatable);
 }
 
 // ── Production workflow ─────────────────────────────────────────

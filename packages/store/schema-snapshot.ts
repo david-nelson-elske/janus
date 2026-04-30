@@ -8,11 +8,12 @@
 
 import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
-import { isSemanticField, isLifecycle, isWiringType } from '@janus/vocabulary';
+import { isSemanticField, isLifecycle, isWiringType, isTranslatableField, translatableColumnName } from '@janus/vocabulary';
 import type { SemanticField } from '@janus/vocabulary';
 import type { AdapterMeta } from './store-adapter';
 import { sqliteType } from './schema-gen';
 import type { TypeResolver } from './schema-gen';
+import type { ResolvedTranslatableConfig } from './translatable-helpers';
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -44,10 +45,49 @@ export interface SchemaSnapshotStore {
 
 // ── Snapshot generation ─────────────────────────────────────────
 
-export function generateSnapshot(meta: AdapterMeta, typeResolver: TypeResolver = sqliteType): EntitySnapshot {
+export function generateSnapshot(
+  meta: AdapterMeta,
+  typeResolver: TypeResolver = sqliteType,
+  translatable?: ResolvedTranslatableConfig | null,
+): EntitySnapshot {
   const fields: FieldSnapshot[] = [];
 
   for (const [name, def] of Object.entries(meta.schema)) {
+    if (isTranslatableField(def)) {
+      // Translatable fields expand into one FieldSnapshot per configured
+      // language. The default-lang column keeps the bare field name; other
+      // langs get `<name>_<lang>`. This makes the standard add-column path
+      // light up automatically — when an app adds a new lang or marks a
+      // field translatable, classifyChanges sees the new lang columns as
+      // ordinary nullable additions.
+      const inner = def.base;
+      if (!isSemanticField(inner)) continue;
+      const baseSqlType = typeResolver(inner as SemanticField);
+      if (translatable && translatable.langs.length > 0) {
+        for (const lang of translatable.langs) {
+          const colName = translatableColumnName(name, lang, translatable.defaultLang);
+          const isDefault = lang === translatable.defaultLang;
+          fields.push({
+            name: colName,
+            kind: inner.kind,
+            sqlType: baseSqlType,
+            required: isDefault && !!inner.hints?.required,
+            enumValues:
+              inner.kind === 'enum' ? (inner as { values?: readonly string[] }).values : undefined,
+          });
+        }
+      } else {
+        fields.push({
+          name,
+          kind: inner.kind,
+          sqlType: baseSqlType,
+          required: !!inner.hints?.required,
+          enumValues:
+            inner.kind === 'enum' ? (inner as { values?: readonly string[] }).values : undefined,
+        });
+      }
+      continue;
+    }
     if (isSemanticField(def)) {
       fields.push({
         name,

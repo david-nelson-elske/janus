@@ -13,6 +13,8 @@ import type { BindingContext, SerializedBindingContext } from '@janus/client';
 import { serializeInitData } from '@janus/client';
 import type { BindingRecord, CompileResult, Identity } from '@janus/core';
 import { ANONYMOUS } from '@janus/core';
+import type { I18nInstance, Translator } from '@janus/i18n';
+import { LangContext } from '@janus/i18n';
 import { h } from 'preact';
 import renderToString from 'preact-render-to-string';
 import { DefaultShell, MinimalShell, type ShellComponent } from './shells';
@@ -56,6 +58,12 @@ export interface RenderPageConfig {
   readonly identity?: Identity;
   readonly theme?: ThemeConfig;
   readonly layout?: LayoutConfig;
+  /** Active language for this render. Overrides `theme.lang`. */
+  readonly lang?: string;
+  /** Translator bound to the active language. When set, exposed via LangContext. */
+  readonly t?: Translator;
+  /** I18n instance — when set, hreflang alternates and lang attribute use it. */
+  readonly i18n?: I18nInstance;
 }
 
 // ── Public API ─────────────────────────────────────────────────────
@@ -64,12 +72,28 @@ export interface RenderPageConfig {
  * Render a full HTML page from binding contexts.
  */
 export function renderPage(config: RenderPageConfig): string {
-  const { registry, contexts, binding, cursor, title, path, identity, theme, layout } = config;
+  const {
+    registry,
+    contexts,
+    binding,
+    cursor,
+    title,
+    path,
+    identity,
+    theme,
+    layout,
+    lang,
+    t,
+    i18n,
+  } = config;
 
   const Component = binding.component as ShellComponent;
   const mainCtx = contexts[0];
   const resolvedIdentity = identity ?? ANONYMOUS;
   const resolvedPath = path ?? '/';
+  const resolvedLang = lang ?? i18n?.defaultLang ?? theme?.lang ?? 'en';
+  const resolvedT: Translator = t ?? ((key) => key);
+  const langContextValue = { lang: resolvedLang, t: resolvedT };
 
   // ADR-124-12e: full-page mode — the binding component owns the whole
   // viewport. Skip the shell wrap entirely. `path`, `identity`, and
@@ -89,9 +113,11 @@ export function renderPage(config: RenderPageConfig): string {
         registry,
       } as any,
     );
-    const appHtml = renderToString(componentVNode);
+    const appHtml = renderToString(
+      h(LangContext.Provider, { value: langContextValue }, componentVNode),
+    );
     const initData = serializeInitData(contexts, cursor);
-    return renderDocument(appHtml, initData, title, theme);
+    return renderDocument(appHtml, initData, title, theme, resolvedLang, resolvedPath, i18n);
   }
 
   const componentVNode = h(
@@ -120,11 +146,13 @@ export function renderPage(config: RenderPageConfig): string {
     Shell = DefaultShell;
   }
 
-  const appHtml = renderToString(h(Shell, shellProps));
+  const appHtml = renderToString(
+    h(LangContext.Provider, { value: langContextValue }, h(Shell, shellProps)),
+  );
 
   const initData = serializeInitData(contexts, cursor);
 
-  return renderDocument(appHtml, initData, title, theme);
+  return renderDocument(appHtml, initData, title, theme, resolvedLang, resolvedPath, i18n);
 }
 
 // ── Document template ──────────────────────────────────────────────
@@ -134,8 +162,11 @@ function renderDocument(
   initData: { contexts: readonly SerializedBindingContext[]; cursor?: string },
   title?: string,
   theme?: ThemeConfig,
+  lang?: string,
+  path?: string,
+  i18n?: I18nInstance,
 ): string {
-  const lang = theme?.lang ?? 'en';
+  const resolvedLang = lang ?? theme?.lang ?? 'en';
   const pageTitle = title ?? theme?.title ?? 'Janus';
   const initJson = JSON.stringify(initData);
 
@@ -155,8 +186,31 @@ function renderDocument(
 
   const headExtras = theme?.headExtras ?? '';
 
+  // hreflang alternates: emit one <link> per supported lang pointing at the
+  // mirror URL for `path`. With cookie-based switching the URL stays the
+  // same, so each tag points at the same path; with path-prefix mode the
+  // prefix is rewritten per lang. Search engines tolerate same-URL
+  // alternates; humans get accurate cross-lang links via the switcher.
+  let hreflangs = '';
+  if (i18n && path) {
+    const tags: string[] = [];
+    for (const supported of i18n.langs) {
+      const href = buildAlternatePath(path, supported, i18n);
+      tags.push(
+        `<link rel="alternate" hreflang="${escapeHtml(supported)}" href="${escapeHtml(href)}" />`,
+      );
+    }
+    if (i18n.langs.length > 0) {
+      const defaultHref = buildAlternatePath(path, i18n.defaultLang, i18n);
+      tags.push(
+        `<link rel="alternate" hreflang="x-default" href="${escapeHtml(defaultHref)}" />`,
+      );
+    }
+    hreflangs = tags.join('\n  ');
+  }
+
   return `<!DOCTYPE html>
-<html lang="${escapeHtml(lang)}">
+<html lang="${escapeHtml(resolvedLang)}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -164,6 +218,7 @@ function renderDocument(
   ${fontsHtml}
   ${cssUrlLinks}
   <style>${inlineStyles}</style>
+  ${hreflangs}
   ${headExtras}
 </head>
 <body>
@@ -173,6 +228,31 @@ function renderDocument(
   </script>
 </body>
 </html>`;
+}
+
+/**
+ * Build the URL for `lang`'s mirror of `path`. Strips any active path-prefix
+ * before re-applying the target prefix so `/fr/quebec` ↔ `/quebec` works.
+ */
+function buildAlternatePath(path: string, lang: string, i18n: I18nInstance): string {
+  // Strip any existing prefix.
+  let bare = path;
+  for (const [prefixLang, prefix] of Object.entries(i18n.pathPrefix)) {
+    const normalized = prefix.startsWith('/') ? prefix : `/${prefix}`;
+    if (bare === normalized) {
+      bare = '/';
+      break;
+    }
+    if (bare.startsWith(`${normalized}/`)) {
+      bare = bare.slice(normalized.length);
+      break;
+    }
+    void prefixLang;
+  }
+  const targetPrefix = i18n.pathPrefix[lang];
+  if (!targetPrefix) return bare;
+  const normalizedTarget = targetPrefix.startsWith('/') ? targetPrefix : `/${targetPrefix}`;
+  return bare === '/' ? normalizedTarget : `${normalizedTarget}${bare}`;
 }
 
 function renderFonts(fonts: ThemeFontsConfig): string {

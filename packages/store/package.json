@@ -14,6 +14,6 @@
     "postgres": "^3.4.7"
   },
   "janus": {
-    "tier": "source",
+    "tier": "source"
   }
 }

@@ -68,6 +68,8 @@ export interface AppConfig {
   readonly theme?: import('./ssr-renderer').ThemeConfig;
   /** Consumer layout shell overrides for binding-driven SSR pages (ADR-124-12c). */
   readonly layout?: import('./ssr-renderer').LayoutConfig;
+  /** I18n instance — when set, mounts middleware and threads lang into SSR. */
+  readonly i18n?: import('@janus/i18n').I18nInstance;
 }
 
 export interface App {
@@ -154,10 +156,18 @@ export async function createApp(config: AppConfig): Promise<App> {
   );
 
   // Phase 2: Store initialization
+  // When an i18n instance is provided (ADR 125-00), auto-forward its langs +
+  // defaultLang to both adapters so `Translatable(...)` fields provision the
+  // matching parallel columns. Apps that want strict-mode (no fallback) or
+  // a different lang set still create the adapters manually.
+  const translatable = config.i18n
+    ? { langs: config.i18n.langs, defaultLang: config.i18n.defaultLang }
+    : undefined;
   const sqliteAdapter = createSqliteAdapter({
     path: config.store?.path ?? ':memory:',
+    translatable,
   });
-  const memoryAdapter = createMemoryAdapter();
+  const memoryAdapter = createMemoryAdapter({ translatable });
 
   // Lazy store ref for derived adapter (it needs to read from the store it's part of)
   let storeRef: import('@janus/core').EntityStore;
@@ -225,6 +235,7 @@ export async function createApp(config: AppConfig): Promise<App> {
       authRoutes,
       theme: config.theme,
       layout: config.layout,
+      i18n: config.i18n,
     });
   } else {
     honoApp = new Hono();

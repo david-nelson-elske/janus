@@ -9,6 +9,7 @@
   "dependencies": {
     "@janus/core": "workspace:*",
     "@janus/client": "workspace:*",
+    "@janus/i18n": "workspace:*",
     "@janus/pipeline": "workspace:*",
     "@janus/store": "workspace:*",
     "@janus/vocabulary": "workspace:*",
@@ -18,6 +19,6 @@
     "preact-render-to-string": "^6.6.0"
   },
   "janus": {
-    "tier": "composition",
+    "tier": "composition"
   }
 }

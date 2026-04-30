@@ -28,6 +28,11 @@ import { reconcileSchema } from './schema-reconcile';
 import type { ReconciliationReport } from './schema-reconcile';
 import { RelationalOps, jsonFieldNames } from './relational-ops';
 import type { DialectOps } from './relational-ops';
+import {
+  type ResolvedTranslatableConfig,
+  type TranslatableConfig,
+  resolveTranslatableConfig,
+} from './translatable-helpers';
 
 export interface PostgresAdapterConfig {
   /** Connection URL (e.g., postgres://user:pass@localhost:5432/db). */
@@ -44,6 +49,8 @@ export interface PostgresAdapterConfig {
   readonly password?: string;
   /** Max connections in pool (default: 10). */
   readonly max?: number;
+  /** Translatable field config (ADR 125-00). Provisions parallel `<field>_<lang>` columns. */
+  readonly translatable?: TranslatableConfig;
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: Kysely generic DB type
@@ -89,6 +96,7 @@ class PostgresAdapterImpl implements ReconcilableAdapter {
   private ops: RelationalOps;
   private snapshotStore: SchemaSnapshotStore;
   private snapshotStoreReady = false;
+  private translatable: ResolvedTranslatableConfig | null;
 
   constructor(config: PostgresAdapterConfig) {
     const pgOptions: postgres.Options<Record<string, postgres.PostgresType>> = {
@@ -111,7 +119,14 @@ class PostgresAdapterImpl implements ReconcilableAdapter {
     this.db = new Kysely({
       dialect: new PostgresJSDialect({ postgres: this.pgSql }),
     });
-    this.ops = new RelationalOps(this.db, this.metaMap, this.ftsEntities, postgresDialect);
+    this.translatable = resolveTranslatableConfig(config.translatable);
+    this.ops = new RelationalOps(
+      this.db,
+      this.metaMap,
+      this.ftsEntities,
+      postgresDialect,
+      this.translatable,
+    );
     this.snapshotStore = createSchemaSnapshotStore(this.db);
   }
 
@@ -135,14 +150,16 @@ class PostgresAdapterImpl implements ReconcilableAdapter {
     // Reconcile if there are existing snapshots or drops to process
     let report: ReconciliationReport | null = null;
     if (knownEntities.size > 0 || (drops && drops.size > 0)) {
-      report = await reconcileSchema(this.db, metas, this.snapshotStore, drops);
+      report = await reconcileSchema(this.db, metas, this.snapshotStore, drops, this.translatable);
     }
 
     // Create tables for genuinely new entities (not in snapshot)
     for (const meta of metas) {
       if (!knownEntities.has(meta.entity)) {
-        await sql.raw(generateCreateTablePg(meta)).execute(this.db);
-        await this.snapshotStore.writeSnapshot(generateSnapshot(meta, postgresType));
+        await sql.raw(generateCreateTablePg(meta, this.translatable)).execute(this.db);
+        await this.snapshotStore.writeSnapshot(
+          generateSnapshot(meta, postgresType, this.translatable),
+        );
       }
     }
 
@@ -226,7 +243,13 @@ class PostgresAdapterImpl implements ReconcilableAdapter {
 
   async withTransaction<T>(fn: (adapter: StoreAdapter) => Promise<T>): Promise<T> {
     return this.db.transaction().execute(async (trx) => {
-      const txOps = new RelationalOps(trx as unknown as DB, this.metaMap, this.ftsEntities, postgresDialect);
+      const txOps = new RelationalOps(
+        trx as unknown as DB,
+        this.metaMap,
+        this.ftsEntities,
+        postgresDialect,
+        this.translatable,
+      );
       const txAdapter: StoreAdapter = {
         initialize: async () => {},
         read: (meta, params) => txOps.read(meta, params),

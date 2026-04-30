@@ -10,6 +10,6 @@
     "@janus/vocabulary": "workspace:*"
   },
   "janus": {
-    "tier": "source",
+    "tier": "source"
   }
 }

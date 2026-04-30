@@ -748,6 +748,15 @@ export interface ReadParams {
    * throws `auth-error` at runtime when absent on non-allowlisted call sites.
    */
   readonly scope?: StoreScope;
+  /**
+   * Active language for translatable-field resolution (ADR 125-00). When set,
+   * adapters configured with translatable support rewrite returned records
+   * so `record.<field>` reflects the active-lang column with default-lang
+   * fallback; where-clause references to translatable fields are rewritten
+   * to query the matching `<field>_<lang>` column. Untranslatable adapters
+   * ignore this field.
+   */
+  readonly lang?: string;
 }
 
 export type SortDirection = 'asc' | 'desc';
@@ -759,6 +768,13 @@ export interface SortClause {
 
 export interface UpdateOptions {
   readonly expectedVersion?: number;
+  /**
+   * Active language for translatable-field writes (ADR 125-00). When set,
+   * adapters route bare translatable field values to the matching
+   * `<field>_<lang>` column instead of the default-lang column. Callers
+   * may also write to specific lang columns directly (e.g. `{ title_fr: 'X' }`).
+   */
+  readonly lang?: string;
 }
 
 export interface EntityStore {
@@ -960,6 +976,8 @@ export interface QueryFieldRecord {
   readonly type: string;
   readonly operators: readonly string[];
   readonly required: boolean;
+  /** True when this field is wrapped in `Translatable(...)`. Type reflects the base. */
+  readonly translatable?: boolean;
 }
 
 /** Operators available per semantic type kind */

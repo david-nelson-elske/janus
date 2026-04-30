@@ -11,6 +11,7 @@
 
 import type { AssetBackend, CompileResult, HttpRequestContext, InitiatorConfig } from '@janus/core';
 import { SYSTEM } from '@janus/core';
+import type { I18nInstance } from '@janus/i18n';
 import type { ConnectionManager, DispatchRuntime, HttpResponse } from '@janus/pipeline';
 import { isSemanticField } from '@janus/vocabulary';
 import { Hono } from 'hono';
@@ -32,6 +33,8 @@ export interface CreateHttpAppConfig {
   readonly theme?: ThemeConfig;
   /** Consumer layout overrides (ADR-124-12c). */
   readonly layout?: LayoutConfig;
+  /** I18n instance — when set, mounts middleware and threads lang into SSR. */
+  readonly i18n?: I18nInstance;
 }
 
 /**
@@ -49,6 +52,13 @@ export function createHttpApp(config: CreateHttpAppConfig): Hono {
     c.header('X-Frame-Options', 'SAMEORIGIN');
     c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
   });
+
+  // I18n middleware — runs before page/API routes so c.var.lang and c.var.t
+  // are populated by the time handlers fire. Also handles the lang-set
+  // route mounted by the i18n instance.
+  if (config.i18n) {
+    app.use('*', config.i18n.middleware());
+  }
 
   // Auth routes (login/callback/logout/me) — mounted before API routes
   if (config.authRoutes) {
@@ -403,6 +413,7 @@ export function createHttpApp(config: CreateHttpAppConfig): Hono {
       runtime: config.runtime,
       theme: config.theme,
       layout: config.layout,
+      i18n: config.i18n,
     });
     app.get('/*', pageHandler);
   }

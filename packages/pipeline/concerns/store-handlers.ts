@@ -16,6 +16,10 @@ import { dispatchToReferencing, applyTransitionEffect } from './store-effects';
 /** Read entity records — single by id or filtered page. */
 export const storeRead: ExecutionHandler = async (ctx) => {
   const input = (ctx.parsed ?? ctx.input ?? {}) as Record<string, unknown>;
+  // `lang` is read off the raw input — schema-parse strips non-entity fields,
+  // so the active language never makes it into ctx.parsed even though
+  // create/update need it for write-time column routing.
+  const rawInput = (ctx.input ?? {}) as Record<string, unknown>;
   const id = input.id as string | undefined;
   const entity = ctx.registry.entity(ctx.entity);
 
@@ -28,13 +32,17 @@ export const storeRead: ExecutionHandler = async (ctx) => {
     where.createdBy = ctx.identity.id;
   }
 
-  const readParams = id ? { id } : {
-    where: Object.keys(where).length > 0 ? where : undefined,
-    sort: input.sort as { field: string; direction: 'asc' | 'desc' }[] | undefined,
-    limit: input.limit as number | undefined,
-    offset: input.offset as number | undefined,
-    search: input.search as string | undefined,
-  };
+  const lang = (input.lang ?? rawInput.lang) as string | undefined;
+  const readParams = id
+    ? { id, lang }
+    : {
+        where: Object.keys(where).length > 0 ? where : undefined,
+        sort: input.sort as { field: string; direction: 'asc' | 'desc' }[] | undefined,
+        limit: input.limit as number | undefined,
+        offset: input.offset as number | undefined,
+        search: input.search as string | undefined,
+        lang,
+      };
 
   const result = await ctx.store.read(ctx.entity, readParams);
 

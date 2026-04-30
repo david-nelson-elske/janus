@@ -9,9 +9,10 @@
  * tier is implemented: ALTER TABLE ADD COLUMN for new nullable fields.
  */
 
-import { isSemanticField, isLifecycle, isWiringType } from '@janus/vocabulary';
+import { isSemanticField, isLifecycle, isWiringType, isTranslatableField, translatableColumnName } from '@janus/vocabulary';
 import type { SemanticField } from '@janus/vocabulary';
 import type { AdapterMeta } from './store-adapter';
+import type { ResolvedTranslatableConfig } from './translatable-helpers';
 
 // ── Type mapping ────────────────────────────────────────────────
 
@@ -100,7 +101,10 @@ export function tableName(entityName: string): string {
 
 // ── DDL generation ──────────────────────────────────────────────
 
-export function generateCreateTable(meta: AdapterMeta): string {
+export function generateCreateTable(
+  meta: AdapterMeta,
+  translatable?: ResolvedTranslatableConfig | null,
+): string {
   const tbl = tableName(meta.entity);
   const columns: string[] = [
     'id TEXT PRIMARY KEY',
@@ -114,7 +118,26 @@ export function generateCreateTable(meta: AdapterMeta): string {
 
   for (const [name, def] of Object.entries(meta.schema)) {
     const quoted = `"${name}"`;
-    if (isLifecycle(def)) {
+    if (isTranslatableField(def)) {
+      // Provision one column per configured language. Default-lang keeps
+      // the bare field name; other langs gain `<field>_<lang>`. Only the
+      // default column inherits NOT NULL — translation columns can be
+      // null until a translator fills them in.
+      const inner = def.base;
+      const baseType = isSemanticField(inner) ? sqliteType(inner) : 'TEXT';
+      if (translatable && translatable.langs.length > 0) {
+        for (const lang of translatable.langs) {
+          const colName = translatableColumnName(name, lang, translatable.defaultLang);
+          const isDefault = lang === translatable.defaultLang;
+          const notNull = isDefault && isSemanticField(inner) && inner.hints?.required ? ' NOT NULL' : '';
+          columns.push(`"${colName}" ${baseType}${notNull}`);
+        }
+      } else {
+        // No translatable config — fall back to bare column.
+        const notNull = isSemanticField(inner) && inner.hints?.required ? ' NOT NULL' : '';
+        columns.push(`${quoted} ${baseType}${notNull}`);
+      }
+    } else if (isLifecycle(def)) {
       columns.push(`${quoted} TEXT`);
     } else if (isWiringType(def)) {
       // Relation/Reference/Mention fields store an ID (text)
@@ -138,15 +161,41 @@ const SEARCHABLE_KINDS = new Set(['str', 'markdown', 'email']);
  * Get searchable field names from an entity schema.
  * A field is searchable if it's a Str, Markdown, or Email type
  * and not explicitly marked searchable: false.
+ *
+ * Translatable fields contribute their default-lang column (the bare field
+ * name). Per-language FTS shadow tables for non-default langs are emitted
+ * by `generatePerLangFtsTables` — keeping this function single-table keeps
+ * existing call-sites unchanged.
  */
 export function getSearchableFields(meta: AdapterMeta): string[] {
   const fields: string[] = [];
   for (const [name, def] of Object.entries(meta.schema)) {
-    if (isSemanticField(def) && SEARCHABLE_KINDS.has(def.kind)) {
-      const searchable = (def as { hints?: { searchable?: boolean } }).hints?.searchable;
+    let inner: unknown = def;
+    if (isTranslatableField(def)) inner = def.base;
+    if (isSemanticField(inner) && SEARCHABLE_KINDS.has(inner.kind)) {
+      const searchable = (inner as { hints?: { searchable?: boolean } }).hints?.searchable;
       if (searchable !== false) {
         fields.push(name);
       }
+    }
+  }
+  return fields;
+}
+
+/**
+ * Translatable fields that participate in FTS — used to build per-language
+ * FTS shadow tables (`<entity>_fts_<lang>`) for non-default languages so
+ * `?search=` against `lang=fr` hits French content. ADR 125-00 §open
+ * question 2: per-language FTS table is the chosen approach.
+ */
+export function getTranslatableSearchableFields(meta: AdapterMeta): string[] {
+  const fields: string[] = [];
+  for (const [name, def] of Object.entries(meta.schema)) {
+    if (!isTranslatableField(def)) continue;
+    const inner = def.base;
+    if (isSemanticField(inner) && SEARCHABLE_KINDS.has(inner.kind)) {
+      const searchable = (inner as { hints?: { searchable?: boolean } }).hints?.searchable;
+      if (searchable !== false) fields.push(name);
     }
   }
   return fields;
@@ -186,7 +235,10 @@ export function generateFtsTriggers(meta: AdapterMeta): string[] | null {
 
 // ── Postgres DDL generation ─────────────────────────────────────
 
-export function generateCreateTablePg(meta: AdapterMeta): string {
+export function generateCreateTablePg(
+  meta: AdapterMeta,
+  translatable?: ResolvedTranslatableConfig | null,
+): string {
   const tbl = tableName(meta.entity);
   const columns: string[] = [
     'id TEXT PRIMARY KEY',
@@ -202,7 +254,21 @@ export function generateCreateTablePg(meta: AdapterMeta): string {
 
   for (const [name, def] of Object.entries(meta.schema)) {
     const quoted = `"${name}"`;
-    if (isLifecycle(def)) {
+    if (isTranslatableField(def)) {
+      const inner = def.base;
+      const baseType = isSemanticField(inner) ? postgresType(inner) : 'TEXT';
+      if (translatable && translatable.langs.length > 0) {
+        for (const lang of translatable.langs) {
+          const colName = translatableColumnName(name, lang, translatable.defaultLang);
+          const isDefault = lang === translatable.defaultLang;
+          const notNull = isDefault && isSemanticField(inner) && inner.hints?.required ? ' NOT NULL' : '';
+          columns.push(`"${colName}" ${baseType}${notNull}`);
+        }
+      } else {
+        const notNull = isSemanticField(inner) && inner.hints?.required ? ' NOT NULL' : '';
+        columns.push(`${quoted} ${baseType}${notNull}`);
+      }
+    } else if (isLifecycle(def)) {
       columns.push(`${quoted} TEXT`);
     } else if (isWiringType(def)) {
       columns.push(`${quoted} TEXT`);
@@ -304,14 +370,45 @@ const FRAMEWORK_COLUMNS = new Set(['id', '_version', 'createdAt', 'createdBy', '
  * Returns ALTER TABLE ADD COLUMN statements for new fields.
  * Removals are reported but not applied (destructive).
  */
-export function diffSchema(meta: AdapterMeta, existingColumns: readonly ColumnInfo[]): SchemaDiff {
+export function diffSchema(
+  meta: AdapterMeta,
+  existingColumns: readonly ColumnInfo[],
+  translatable?: ResolvedTranslatableConfig | null,
+): SchemaDiff {
   const tbl = tableName(meta.entity);
   const existing = new Set(existingColumns.map((c) => c.name));
   const additions: { name: string; sql: string }[] = [];
   const removals: string[] = [];
 
+  // Set of column names the schema is expected to have (used for removals diff).
+  const expectedColumns = new Set<string>();
+
   // Find new columns in schema that don't exist in the table
   for (const [name, def] of Object.entries(meta.schema)) {
+    if (isTranslatableField(def)) {
+      const inner = def.base;
+      const baseType = isSemanticField(inner) ? sqliteType(inner) : 'TEXT';
+      if (translatable && translatable.langs.length > 0) {
+        for (const lang of translatable.langs) {
+          const colName = translatableColumnName(name, lang, translatable.defaultLang);
+          expectedColumns.add(colName);
+          if (!existing.has(colName)) {
+            additions.push({
+              name: colName,
+              sql: `ALTER TABLE "${tbl}" ADD COLUMN "${colName}" ${baseType}`,
+            });
+          }
+        }
+      } else {
+        expectedColumns.add(name);
+        if (!existing.has(name)) {
+          additions.push({ name, sql: `ALTER TABLE "${tbl}" ADD COLUMN "${name}" ${baseType}` });
+        }
+      }
+      continue;
+    }
+
+    expectedColumns.add(name);
     if (existing.has(name)) continue;
 
     if (isLifecycle(def)) {
@@ -326,11 +423,11 @@ export function diffSchema(meta: AdapterMeta, existingColumns: readonly ColumnIn
     }
   }
 
-  // Find columns in table that don't exist in schema (excluding framework columns)
-  const schemaFields = new Set(Object.keys(meta.schema));
+  // Find columns in table that don't exist in schema (excluding framework columns).
+  // Translatable parallel columns are tracked in expectedColumns.
   for (const col of existingColumns) {
     if (FRAMEWORK_COLUMNS.has(col.name)) continue;
-    if (!schemaFields.has(col.name)) {
+    if (!expectedColumns.has(col.name)) {
       removals.push(col.name);
     }
   }

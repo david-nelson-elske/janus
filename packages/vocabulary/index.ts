@@ -207,6 +207,14 @@ export {
 } from './capability-constructors';
 export type { StepConfig } from './step-config';
 export { createStepConstructor } from './step-config';
+// Translatable wrapper (i18n, ADR 125-00)
+export type { TranslatableField } from './translatable';
+export {
+  isTranslatableField,
+  Translatable,
+  translatableColumnName,
+  unwrapTranslatable,
+} from './translatable';
 export type { Sensitivity, MountTrust } from './sensitivity';
 // Sensitivity
 export { sensitivityAllowsMount } from './sensitivity';
