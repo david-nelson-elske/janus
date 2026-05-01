@@ -1,10 +1,15 @@
 /**
  * createI18n() — Core i18n instance for Janus apps.
  *
- * Loads `<resourcesDir>/<lang>.json` files into an i18next instance, resolves
- * the active language per request via a configurable resolver chain
- * (path → cookie → query → accept-language → default), and exposes the active
- * language + translator on the Hono context (`c.var.lang`, `c.var.t`).
+ * Two layouts supported for `resourcesDir`:
+ *   1. Single-file:  `<dir>/<lang>.json`            → one namespace ('translation')
+ *   2. Directory:    `<dir>/<lang>/<ns>.json`       → one namespace per file
+ *
+ * Resolves the active language per request via a configurable resolver
+ * chain (path → cookie → query → accept-language → default), and exposes
+ * the active language + translator on the Hono context (`c.var.lang`,
+ * `c.var.t`). With multi-namespace catalogs, callers use the i18next
+ * colon syntax: `t('blog:heading')` or `t('common:nav.takeAction')`.
  *
  * Use `i18n.middleware()` to mount; `useLang()` / `useT()` from `./context`
  * read the active language inside Preact components.
@@ -108,7 +113,13 @@ export async function createI18n(config: I18nConfig): Promise<I18nInstance> {
     throw new Error(`createI18n: defaultLang "${defaultLang}" not in langs ${JSON.stringify(langs)}`);
   }
 
-  const resources = await loadResources(config.resourcesDir, langs);
+  const { resources, namespaces } = await loadResources(config.resourcesDir, langs);
+
+  // defaultNS: 'common' if catalog defines it (multi-namespace mode),
+  // otherwise 'translation' (single-file backwards-compat mode).
+  const defaultNS = namespaces.includes('common') ? 'common'
+    : namespaces.includes('translation') ? 'translation'
+    : namespaces[0];
 
   const instance = i18next.createInstance();
   await instance.init({
@@ -116,7 +127,8 @@ export async function createI18n(config: I18nConfig): Promise<I18nInstance> {
     lng: defaultLang,
     fallbackLng: defaultLang,
     supportedLngs: langs,
-    defaultNS: 'translation',
+    ns: namespaces,
+    defaultNS,
     interpolation: { escapeValue: false }, // SSR escapes downstream
     returnNull: false,
     returnEmptyString: false,
@@ -295,23 +307,72 @@ function safeRedirect(target: string): string {
 
 // ── Resource loading ───────────────────────────────────────────────
 
+/**
+ * Load translation resources. Supports two layouts:
+ *
+ *   Single-file:  <dir>/<lang>.json
+ *     → one namespace 'translation' per language; existing apps continue working.
+ *
+ *   Directory:    <dir>/<lang>/<namespace>.json
+ *     → one namespace per file. Detected when <dir>/<lang> is a directory.
+ *
+ * Returned shape matches i18next's resources contract:
+ *   resources[lang][namespace] = { ...keys }
+ */
 async function loadResources(
   dir: string,
   langs: readonly string[],
-): Promise<Record<string, { translation: Record<string, unknown> }>> {
-  const resources: Record<string, { translation: Record<string, unknown> }> = {};
+): Promise<{
+  resources: Record<string, Record<string, Record<string, unknown>>>;
+  namespaces: readonly string[];
+}> {
+  const resources: Record<string, Record<string, Record<string, unknown>>> = {};
+  const namespaceSet = new Set<string>();
+
   for (const lang of langs) {
-    const file = join(dir, `${lang}.json`);
+    const langDir = join(dir, lang);
+    const langFile = join(dir, `${lang}.json`);
+
+    let stat: { isDirectory(): boolean } | null = null;
     try {
-      const raw = await fs.readFile(file, 'utf-8');
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      resources[lang] = { translation: parsed };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`createI18n: failed to load ${file}: ${msg}`);
+      stat = await fs.stat(langDir);
+    } catch { /* not a directory — fall through to single-file mode */ }
+
+    resources[lang] = {};
+
+    if (stat?.isDirectory()) {
+      // Directory mode: each .json file is a namespace.
+      const entries = await fs.readdir(langDir);
+      const nsFiles = entries.filter((f) => f.endsWith('.json'));
+      if (nsFiles.length === 0) {
+        throw new Error(`createI18n: no .json files in ${langDir}`);
+      }
+      for (const file of nsFiles) {
+        const ns = file.slice(0, -'.json'.length);
+        const path = join(langDir, file);
+        try {
+          const raw = await fs.readFile(path, 'utf-8');
+          resources[lang][ns] = JSON.parse(raw) as Record<string, unknown>;
+          namespaceSet.add(ns);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(`createI18n: failed to load ${path}: ${msg}`);
+        }
+      }
+    } else {
+      // Single-file mode: backwards compatible.
+      try {
+        const raw = await fs.readFile(langFile, 'utf-8');
+        resources[lang].translation = JSON.parse(raw) as Record<string, unknown>;
+        namespaceSet.add('translation');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`createI18n: failed to load ${langFile}: ${msg}`);
+      }
     }
   }
-  return resources;
+
+  return { resources, namespaces: [...namespaceSet].sort() };
 }
 
 // ── Utils ──────────────────────────────────────────────────────────

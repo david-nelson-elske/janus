@@ -1,11 +1,14 @@
 /**
  * Translation parity check — fails when languages have key drift.
  *
- * For each `<resourcesDir>/<lang>.json`, walks the nested key tree, then
- * reports any keys that are present in *some* lang and missing in others.
- * Plural variants (`key_one`, `key_other`, ...) are normalized to their root
- * key for comparison so French's extra plural forms don't produce false
- * positives.
+ * Supports two layouts:
+ *   1. Single-file:  <dir>/<lang>.json
+ *   2. Directory:    <dir>/<lang>/<ns>.json     (one namespace per file)
+ *
+ * Reports keys present in some lang and missing in others. Plural variants
+ * (`key_one`, `key_other`, ...) are normalized to their root for comparison.
+ * Keys are reported as `<ns>:<dotted.path>` in directory mode so reviewers
+ * can locate the missing string by namespace.
  */
 
 import { promises as fs } from 'node:fs';
@@ -23,8 +26,16 @@ export interface ParityReport {
 const PLURAL_SUFFIX_RE = /_(zero|one|two|few|many|other)$/;
 
 export async function checkParity(resourcesDir: string): Promise<ParityReport> {
-  const entries = await fs.readdir(resourcesDir);
-  const jsonFiles = entries.filter((f) => f.endsWith('.json'));
+  const entries = await fs.readdir(resourcesDir, { withFileTypes: true });
+
+  // Directory mode: <dir>/<lang>/ subdirectories
+  const dirs = entries.filter((e) => e.isDirectory());
+  if (dirs.length > 0) {
+    return checkParityDirMode(resourcesDir, dirs.map((d) => d.name));
+  }
+
+  // Single-file mode: <dir>/<lang>.json
+  const jsonFiles = entries.filter((e) => e.isFile() && e.name.endsWith('.json')).map((e) => e.name);
   if (jsonFiles.length === 0) {
     return { ok: true, missing: {}, langs: [] };
   }
@@ -37,6 +48,33 @@ export async function checkParity(resourcesDir: string): Promise<ParityReport> {
     keysByLang[lang] = collectKeys(data);
   }
 
+  return diff(keysByLang);
+}
+
+async function checkParityDirMode(
+  resourcesDir: string,
+  langDirs: readonly string[],
+): Promise<ParityReport> {
+  const keysByLang: Record<string, Set<string>> = {};
+
+  for (const lang of langDirs) {
+    const langPath = join(resourcesDir, lang);
+    const files = (await fs.readdir(langPath)).filter((f) => f.endsWith('.json'));
+    const langKeys = new Set<string>();
+    for (const file of files) {
+      const ns = file.slice(0, -'.json'.length);
+      const raw = await fs.readFile(join(langPath, file), 'utf-8');
+      const data = JSON.parse(raw) as Record<string, unknown>;
+      // Prefix every key with `<ns>:` so missing-key reports point at the file.
+      for (const key of collectKeys(data)) langKeys.add(`${ns}:${key}`);
+    }
+    keysByLang[lang] = langKeys;
+  }
+
+  return diff(keysByLang);
+}
+
+function diff(keysByLang: Record<string, Set<string>>): ParityReport {
   const langs = Object.keys(keysByLang).sort();
   const union = new Set<string>();
   for (const set of Object.values(keysByLang)) for (const key of set) union.add(key);

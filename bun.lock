@@ -58,6 +58,7 @@
         "@janus/client": "workspace:*",
         "@janus/core": "workspace:*",
         "@janus/http": "workspace:*",
+        "@janus/i18n": "workspace:*",
         "@janus/pipeline": "workspace:*",
         "@janus/store": "workspace:*",
         "@janus/vocabulary": "workspace:*",
