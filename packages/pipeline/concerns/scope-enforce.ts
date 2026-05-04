@@ -70,6 +70,52 @@ function denied(message: string): never {
   });
 }
 
+/**
+ * Observer-write denial (Phase 10, balcony-solar v2.0).
+ *
+ * An assignment whose `role` is 'observer' grants scoped READ and a single
+ * write carve-out: the `comment` entity (so observers can participate in
+ * task threads). Every other create/update/delete on a scoped entity is
+ * denied with `kind: 'OBSERVER_DENIED'` so the voice agent and admin UI
+ * can render a structured denial card distinct from SCOPE_DENIED.
+ *
+ * Sole-gate invariant preserved: this is a sub-rule of scope-enforce, not
+ * a separate concern. Mirrors the v1.0 writeTiers / writeFieldGuard pattern.
+ */
+function assertObserverNotWriting(
+  callerScope: Exclude<StoreScope, 'system'>,
+  assignments: readonly { campaignId?: string; region?: string | null; role?: string }[],
+  entityName: string,
+  operation: string,
+): void {
+  if (operation !== 'create' && operation !== 'update' && operation !== 'delete') return;
+  // Carve-out: comment is the conversation surface; observers can post,
+  // edit, and delete their own comments. The comment entity's own edit-window
+  // (D-16, 15 min) and author check govern the rest.
+  if (entityName === 'comment') return;
+  // Plural campaignIds is read-only (handled upstream); single-campaign
+  // scopes always carry a campaignId.
+  if (!('campaignId' in callerScope) || !callerScope.campaignId) return;
+  const targetCampaignId = callerScope.campaignId;
+  const matching = assignments.find((a) => a.campaignId === targetCampaignId);
+  if (!matching) return; // membership check upstream will deny first
+  if (matching.role === 'observer') {
+    throw Object.assign(
+      new Error(
+        `Access denied: observer role cannot ${operation} '${entityName}' — read-only on this scope (comment writes are the only carve-out)`,
+      ),
+      {
+        kind: 'OBSERVER_DENIED',
+        retryable: false,
+        entity: entityName,
+        operation,
+        role: 'observer',
+        campaignId: targetCampaignId,
+      },
+    );
+  }
+}
+
 function isBypassed(identityRoles: readonly string[], scope: ScopeConfig): boolean {
   const bypass = scope.bypassRoles ?? DEFAULT_BYPASS_ROLES;
   for (const role of bypass) {
@@ -186,6 +232,10 @@ function enforceStructuredScope(
       );
     }
 
+    // Observer role denial fires AFTER membership check so a non-member gets
+    // SCOPE_DENIED (above), and only an observer member gets OBSERVER_DENIED.
+    assertObserverNotWriting(callerScope, assignments, entityName, operation);
+
     if (operation === 'read') {
       let nextInput: Record<string, unknown> = {
         ...input,
@@ -235,6 +285,9 @@ function enforceStructuredScope(
         `Access denied: caller scope region '${callerScope.region}' / campaignId '${callerScope.campaignId}' is not in the principal's assignments`,
       );
     }
+
+    // Observer role denial — runs after membership check (regional tier).
+    assertObserverNotWriting(callerScope, assignments, entityName, operation);
 
     if (operation === 'read') {
       // Hierarchy walk: include the region AND country-scoped-null rows (D-12).
@@ -288,6 +341,9 @@ function enforceStructuredScope(
         `Access denied: caller scope campaignId '${callerScope.campaignId}' is not in the principal's assignments`,
       );
     }
+
+    // Observer role denial — runs after membership check (municipal tier).
+    assertObserverNotWriting(callerScope, assignments, entityName, operation);
 
     if (operation === 'read') {
       let nextInput: Record<string, unknown> = {
