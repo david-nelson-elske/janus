@@ -5,7 +5,7 @@
  * semantic types, strips unknown fields, checks required fields on create.
  */
 
-import { isSemanticField, isLifecycle, isWiringType } from '@janus/vocabulary';
+import { isSemanticField, isLifecycle, isWiringType, isTranslatableField, unwrapTranslatable } from '@janus/vocabulary';
 import type { ExecutionHandler } from '@janus/core';
 
 export const schemaParse: ExecutionHandler = async (ctx) => {
@@ -24,12 +24,19 @@ export const schemaParse: ExecutionHandler = async (ctx) => {
   const schema = entity.schema;
 
   for (const [field, fieldDef] of Object.entries(schema)) {
+    // Unwrap translatable wrapper so semantic-field handling below applies
+    // to its base type (Str / Markdown / etc.). Without this the bare
+    // translatable value gets stripped from `parsed` and any update never
+    // reaches the store layer (defeated the lang forwarding chain).
+    const effective = isTranslatableField(fieldDef)
+      ? unwrapTranslatable(fieldDef)
+      : fieldDef;
     if (!(field in input)) {
       // Check required on create
       if (
         ctx.operation === 'create' &&
-        isSemanticField(fieldDef) &&
-        fieldDef.hints?.required
+        isSemanticField(effective) &&
+        effective.hints?.required
       ) {
         throw Object.assign(new Error(`Required field '${field}' is missing`), {
           kind: 'parse-error',
@@ -42,9 +49,9 @@ export const schemaParse: ExecutionHandler = async (ctx) => {
     const value = input[field];
 
     // Coerce types
-    if (isSemanticField(fieldDef)) {
-      parsed[field] = coerceValue(value, fieldDef.kind);
-    } else if (isLifecycle(fieldDef) || isWiringType(fieldDef)) {
+    if (isSemanticField(effective)) {
+      parsed[field] = coerceValue(value, effective.kind);
+    } else if (isLifecycle(effective) || isWiringType(effective)) {
       parsed[field] = value;
     }
   }
