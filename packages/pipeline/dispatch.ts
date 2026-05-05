@@ -232,11 +232,23 @@ function errorResponse(
 
 function toDispatchError(err: unknown): DispatchError {
   if (err instanceof Error) {
-    const e = err as Error & { kind?: string; retryable?: boolean };
+    const e = err as Error & { kind?: string; retryable?: boolean; details?: Record<string, unknown> };
+    // Forward any additional thrown props (e.g. scope-enforce's
+    // entity/operation/role/campaignId on OBSERVER_DENIED) at top level so
+    // downstream code can pattern-match on `err.entity` etc. directly.
+    const aux: Record<string, unknown> = {};
+    for (const key of Object.keys(e)) {
+      if (key === 'kind' || key === 'message' || key === 'retryable' || key === 'name' || key === 'stack' || key === 'cause' || key === 'details') {
+        continue;
+      }
+      aux[key] = (e as unknown as Record<string, unknown>)[key];
+    }
     return {
       kind: e.kind ?? 'internal',
       message: e.message,
       retryable: e.retryable ?? false,
+      ...aux,
+      ...(e.details ? { details: e.details } : {}),
     };
   }
   return { kind: 'internal', message: String(err), retryable: false };
