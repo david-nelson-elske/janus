@@ -23,6 +23,18 @@ export const schemaParse: ExecutionHandler = async (ctx) => {
   const parsed: Record<string, unknown> = {};
   const schema = entity.schema;
 
+  // Collect per-language sibling keys for Translatable fields so callers
+  // can write `{ title: 'EN', title_fr: 'FR' }` in a single dispatch and
+  // have the parallel column populated. The base field's required-check
+  // and type-coercion apply to each sibling individually.
+  const translatableBases = new Map<string, string>(); // base name → semantic kind
+  for (const [field, fieldDef] of Object.entries(schema)) {
+    if (isTranslatableField(fieldDef)) {
+      const base = unwrapTranslatable(fieldDef);
+      if (isSemanticField(base)) translatableBases.set(field, base.kind);
+    }
+  }
+
   for (const [field, fieldDef] of Object.entries(schema)) {
     // Unwrap translatable wrapper so semantic-field handling below applies
     // to its base type (Str / Markdown / etc.). Without this the bare
@@ -54,6 +66,20 @@ export const schemaParse: ExecutionHandler = async (ctx) => {
     } else if (isLifecycle(effective) || isWiringType(effective)) {
       parsed[field] = value;
     }
+  }
+
+  // Pass through `<base>_<lang>` siblings of Translatable fields. We don't
+  // know the i18n config here, so we accept any suffix — the adapter
+  // ultimately decides which columns exist (unknown columns hard-error
+  // there, which is the right surface for typos like `title_xx`).
+  for (const key of Object.keys(input)) {
+    if (key in schema || key === 'id') continue;
+    const underscore = key.lastIndexOf('_');
+    if (underscore <= 0) continue;
+    const base = key.slice(0, underscore);
+    const baseKind = translatableBases.get(base);
+    if (!baseKind) continue;
+    parsed[key] = coerceValue(input[key], baseKind);
   }
 
   // id is always passed through for update/delete
