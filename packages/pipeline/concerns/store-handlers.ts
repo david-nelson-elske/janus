@@ -66,13 +66,20 @@ export const storeRead: ExecutionHandler = async (ctx) => {
   }
 };
 
-/** Create a new entity record. Stamps createdBy/updatedBy from dispatch identity. */
+/** Create a new entity record. Stamps createdBy/updatedBy from dispatch identity.
+ *  Forwards the dispatch-level `lang` flag as `__lang` so adapters can route
+ *  Translatable() values into the matching parallel column. */
 export const storeCreate: ExecutionHandler = async (ctx) => {
-  const input = {
-    ...(ctx.parsed ?? {}),
+  const parsed = (ctx.parsed ?? {}) as Record<string, unknown>;
+  const input: Record<string, unknown> = {
+    ...parsed,
     createdBy: ctx.identity.id,
     updatedBy: ctx.identity.id,
   };
+  const langHint = parsed.lang ?? (ctx.input as Record<string, unknown> | undefined)?.lang;
+  if (typeof langHint === 'string' && langHint.length > 0) {
+    input.__lang = langHint;
+  }
   const record = await ctx.store.create(ctx.entity, input);
   ctx.result = { kind: 'record', record };
 };
@@ -104,10 +111,16 @@ export const storeUpdate: ExecutionHandler = async (ctx) => {
     }
   }
 
-  const record = await ctx.store.update(ctx.entity, id as string, {
+  const updatePayload: Record<string, unknown> = {
     ...patch,
     updatedBy: ctx.identity.id,
-  });
+  };
+  const langHint = (input as Record<string, unknown>).lang
+    ?? (ctx.input as Record<string, unknown> | undefined)?.lang;
+  if (typeof langHint === 'string' && langHint.length > 0) {
+    updatePayload.__lang = langHint;
+  }
+  const record = await ctx.store.update(ctx.entity, id as string, updatePayload);
   ctx.result = { kind: 'record', record };
 
   // ── Transition effects (ADR 01d) ──────────────────────────────
