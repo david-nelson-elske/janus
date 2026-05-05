@@ -76,6 +76,9 @@ export const storeCreate: ExecutionHandler = async (ctx) => {
     createdBy: ctx.identity.id,
     updatedBy: ctx.identity.id,
   };
+  // The dispatch-level lang flag is not a field on any entity. Strip it
+  // from the record and forward it as the adapter's __lang write hint.
+  delete input.lang;
   const langHint = parsed.lang ?? (ctx.input as Record<string, unknown> | undefined)?.lang;
   if (typeof langHint === 'string' && langHint.length > 0) {
     input.__lang = langHint;
@@ -115,12 +118,15 @@ export const storeUpdate: ExecutionHandler = async (ctx) => {
     ...patch,
     updatedBy: ctx.identity.id,
   };
+  // Strip the lang hint from the patch (it's not a real field) and pass
+  // it through UpdateOptions instead — that's the adapter's contract.
+  delete (updatePayload as Record<string, unknown>).lang;
   const langHint = (input as Record<string, unknown>).lang
     ?? (ctx.input as Record<string, unknown> | undefined)?.lang;
-  if (typeof langHint === 'string' && langHint.length > 0) {
-    updatePayload.__lang = langHint;
-  }
-  const record = await ctx.store.update(ctx.entity, id as string, updatePayload);
+  const updateOptions = typeof langHint === 'string' && langHint.length > 0
+    ? { lang: langHint }
+    : undefined;
+  const record = await ctx.store.update(ctx.entity, id as string, updatePayload, updateOptions);
   ctx.result = { kind: 'record', record };
 
   // ── Transition effects (ADR 01d) ──────────────────────────────
