@@ -207,6 +207,7 @@ async function cmdRead(parsed: ParsedArgs, runtime: DispatchRuntime, json: boole
   if (parsed.flags.id) input.id = parsed.flags.id;
   if (parsed.flags.where) input.where = parseWhere(parsed.flags.where);
   if (parsed.flags.search) input.search = parsed.flags.search;
+  if (parsed.flags.lang) input.lang = parsed.flags.lang;
 
   return dispatchAndFormat(runtime, initiator, parsed.entity, 'read', input, json, (data) => {
     const record = data as Record<string, unknown>;
