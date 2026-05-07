@@ -161,7 +161,7 @@ export async function executeCommand(
     case 'dispatch':
       return cmdDispatch(parsed, runtime!, parsed.json, initiator, identity);
     case 'capabilities':
-      return cmdCapabilities(registry!, parsed.json);
+      return cmdCapabilities(registry!, parsed);
     case 'capability':
       return cmdCapability(parsed.entity, registry!, parsed.json);
     case 'call':
@@ -291,11 +291,32 @@ async function cmdDispatch(parsed: ParsedArgs, runtime: DispatchRuntime, json: b
 
 // ── Capability commands ────────────────────────────────────────
 
-function cmdCapabilities(registry: CompileResult, json: boolean): string {
-  const caps = Array.from(registry.capabilities.values()).sort((a, b) =>
+function cmdCapabilities(registry: CompileResult, parsed: ParsedArgs): string {
+  let caps = Array.from(registry.capabilities.values()).sort((a, b) =>
     a.name.localeCompare(b.name),
   );
-  if (json) {
+
+  // --tag <name>: any-match against the capability's tag list. Multi-tag
+  // via comma: --tag mail,sync.
+  const tagFlag = parsed.flags.tag;
+  if (tagFlag) {
+    const wanted = new Set(tagFlag.split(',').map((s) => s.trim()).filter(Boolean));
+    caps = caps.filter((c) => c.tags?.some((t) => wanted.has(t)) ?? false);
+  }
+
+  // --search <term>: substring match against name and description.
+  const search = parsed.flags.search;
+  if (search) {
+    const needle = search.toLowerCase();
+    caps = caps.filter(
+      (c) =>
+        c.name.toLowerCase().includes(needle)
+        || c.description.toLowerCase().includes(needle)
+        || (c.longDescription?.toLowerCase().includes(needle) ?? false),
+    );
+  }
+
+  if (parsed.json) {
     return formatJson(
       caps.map((c) => ({
         name: c.name,
@@ -392,13 +413,15 @@ Entity commands:
   dispatch <entity>:<op> [--id <id>]      Dispatch a named operation
 
 Capability commands:
-  capabilities                            List all capabilities
+  capabilities [--tag x[,y]] [--search t]  List capabilities (filter by tag or term)
   capability <name>                       Show capability details
   call <name> --field value ...           Invoke a capability
 
 Flags:
   --json                                  Output as JSON (for agents)
-  --where key=val                         Filter (for read)${extraHelp}`;
+  --where key=val                         Filter (for read)
+  --tag <tag>[,<tag>]                     Filter capabilities by tag (any-match)
+  --search <term>                         Filter capabilities by name/description${extraHelp}`;
 }
 
 // ── Reusable CLI runner ─────────────────────────────────────────

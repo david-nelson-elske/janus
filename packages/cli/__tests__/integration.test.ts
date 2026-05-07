@@ -237,6 +237,49 @@ describe('capabilities command', () => {
     expect(web.audited).toBe(true);
     expect(web.tags).toContain('web');
   });
+
+  test('--tag filters by single tag', async () => {
+    const output = await run('capabilities --tag web --json');
+    const data = JSON.parse(output);
+    expect(data.map((c: { name: string }) => c.name)).toEqual(['web__fetch']);
+  });
+
+  test('--tag with comma-list does any-match', async () => {
+    const output = await run('capabilities --tag system,meta --json');
+    const data = JSON.parse(output);
+    const names = data.map((c: { name: string }) => c.name).sort();
+    expect(names).toEqual(['framework__describe', 'system__time']);
+  });
+
+  test('--tag with no matches returns empty list', async () => {
+    const output = await run('capabilities --tag nonexistent --json');
+    const data = JSON.parse(output);
+    expect(data).toEqual([]);
+  });
+
+  test('--search matches against name', async () => {
+    const output = await run('capabilities --search fetch --json');
+    const data = JSON.parse(output);
+    expect(data.map((c: { name: string }) => c.name)).toEqual(['web__fetch']);
+  });
+
+  test('--search matches against description', async () => {
+    const output = await run('capabilities --search registry --json');
+    const data = JSON.parse(output);
+    expect(data.map((c: { name: string }) => c.name)).toEqual(['framework__describe']);
+  });
+
+  test('--search is case insensitive', async () => {
+    const output = await run('capabilities --search FETCH --json');
+    const data = JSON.parse(output);
+    expect(data.map((c: { name: string }) => c.name)).toEqual(['web__fetch']);
+  });
+
+  test('--tag and --search combine (AND)', async () => {
+    const output = await run('capabilities --tag system --search time --json');
+    const data = JSON.parse(output);
+    expect(data.map((c: { name: string }) => c.name)).toEqual(['system__time']);
+  });
 });
 
 describe('capability command', () => {
