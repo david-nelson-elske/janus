@@ -7,9 +7,11 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import type { CompileResult, Identity } from '@janus/core';
+import type { CapabilityContext, CapabilityRecord, CompileResult, Identity, InternalDispatch, SchemaField } from '@janus/core';
+import { SYSTEM } from '@janus/core';
+import { isSemanticField } from '@janus/vocabulary';
 import type { DispatchRuntime } from '@janus/pipeline';
-import { discoverTools } from './context';
+import { discoverCapabilities, discoverTools } from './context';
 import type { ToolDescriptor, AgentResponse } from './types';
 
 // ── Tool conversion ─────────────────────────────────────────────
@@ -116,6 +118,84 @@ export function parseToolName(name: string): { entity: string; operation: string
   return { entity: name.slice(0, idx), operation: name.slice(idx + 2) };
 }
 
+// ── Capability tool conversion ──────────────────────────────────
+
+/**
+ * Build a JSON Schema input_schema from a capability's input field schema.
+ * Reuses the same semantic-type → JSON Schema mapping as entity tools.
+ */
+function buildCapabilityInputSchema(
+  schema: Readonly<Record<string, SchemaField>>,
+): Anthropic.Messages.Tool.InputSchema {
+  const properties: Record<string, Record<string, unknown>> = {};
+  const required: string[] = [];
+
+  for (const [name, field] of Object.entries(schema)) {
+    const kind = isSemanticField(field) ? field.kind : 'unknown';
+    const prop: Record<string, unknown> = { type: jsonSchemaType(kind) };
+    if (isSemanticField(field) && field.kind === 'enum') {
+      const values = (field as { values: readonly string[] }).values;
+      if (values?.length) prop.enum = [...values];
+    }
+    properties[name] = prop;
+    if (isSemanticField(field) && field.hints?.required) {
+      required.push(name);
+    }
+  }
+
+  return {
+    type: 'object' as const,
+    properties,
+    ...(required.length ? { required } : {}),
+  };
+}
+
+function buildCapabilityDescription(cap: CapabilityRecord): string {
+  return cap.longDescription ?? cap.description;
+}
+
+/**
+ * Convert CapabilityRecord[] from discoverCapabilities() into Claude API tool definitions.
+ * Tool names are passed through verbatim (already in `namespace__verb` shape).
+ */
+export function toClaudeToolsFromCapabilities(
+  capabilities: readonly CapabilityRecord[],
+): Anthropic.Messages.Tool[] {
+  return capabilities.map((c) => ({
+    name: c.name,
+    description: buildCapabilityDescription(c),
+    input_schema: buildCapabilityInputSchema(c.inputSchema),
+  }));
+}
+
+/**
+ * Validate raw input against a capability's inputSchema.
+ * Phase 1: enforces required fields only; coercion left for a later commit.
+ */
+function parseCapabilityInput(
+  cap: CapabilityRecord,
+  raw: unknown,
+): Record<string, unknown> {
+  const input = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  for (const [field, fieldDef] of Object.entries(cap.inputSchema)) {
+    if (isSemanticField(fieldDef) && fieldDef.hints?.required) {
+      const value = input[field];
+      if (value === undefined || value === null || value === '') {
+        throw new Error(
+          `Capability '${cap.name}' requires field '${field}'`,
+        );
+      }
+    }
+  }
+  return input;
+}
+
+/** Extract the namespace prefix from a capability name (text before first '__'). */
+function capabilityNamespace(name: string): string {
+  const idx = name.indexOf('__');
+  return idx === -1 ? name : name.slice(0, idx);
+}
+
 // ── Agent loop ──────────────────────────────────────────────────
 
 export interface AgentLoopConfig {
@@ -149,6 +229,17 @@ export interface AgentLoopConfig {
    * tools are included (current behavior).
    */
   readonly toolEntities?: readonly string[];
+  /**
+   * Optional allowlist of capability names. Mirrors `toolEntities` for the
+   * capability primitive. When omitted, every capability registered on the
+   * registry is exposed to the model. Pass an empty array to expose none.
+   */
+  readonly capabilityNames?: readonly string[];
+  /**
+   * Optional allowlist of capability tags. A capability is exposed if any of
+   * its tags appears in this list. Combined with `capabilityNames` via AND.
+   */
+  readonly capabilityTags?: readonly string[];
   /**
    * Additional tools to register alongside auto-discovered entity tools.
    * Use this for Anthropic server tools (e.g. web_search) or custom client-side
@@ -263,8 +354,19 @@ export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
     ? allDiscoveredTools.filter((t) => config.toolEntities!.includes(t.entity))
     : allDiscoveredTools;
   const entityClaudeTools = toClaudeTools(discoveredTools);
+
+  // Capabilities: peer to entity tools, with their own allowlists.
+  const discoveredCapabilities = discoverCapabilities(config.registry, {
+    include: config.capabilityNames,
+    tags: config.capabilityTags,
+  });
+  const capabilityClaudeTools = toClaudeToolsFromCapabilities(discoveredCapabilities);
+  const capabilityByName = new Map<string, CapabilityRecord>();
+  for (const cap of discoveredCapabilities) capabilityByName.set(cap.name, cap);
+
   const claudeTools: Anthropic.Messages.ToolUnion[] = [
     ...entityClaudeTools,
+    ...capabilityClaudeTools,
     ...(config.extraTools ?? []),
   ];
   const extraToolHandlers = config.extraToolHandlers ?? {};
@@ -282,6 +384,47 @@ export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
   const messages: Anthropic.Messages.MessageParam[] = [];
 
   async function handleToolUse(block: Anthropic.Messages.ToolUseBlock): Promise<Anthropic.Messages.ToolResultBlockParam> {
+    // Capability dispatch wins over entity__operation parsing because capabilities
+    // are explicit declarations. A capability named 'drive__search' is *the* drive
+    // search; the lookup is unambiguous.
+    const cap = capabilityByName.get(block.name);
+    if (cap) {
+      const ns = capabilityNamespace(cap.name);
+      config.onToolCall?.(ns, cap.name, block.input);
+      try {
+        const input = parseCapabilityInput(cap, block.input);
+        const id = (typeof config.identity === 'function' ? config.identity() : config.identity) ?? SYSTEM;
+        const internalDispatch: InternalDispatch = (entity, operation, op_input, op_id) =>
+          config.runtime.dispatch(initiator, entity, operation, op_input, op_id);
+        const ctx: CapabilityContext = {
+          identity: id,
+          dispatch: internalDispatch,
+          correlationId: crypto.randomUUID(),
+        };
+        const result = await cap.handler(input, ctx);
+        const agentResponse: AgentResponse = { ok: true, data: result };
+        config.onToolResult?.(ns, cap.name, agentResponse);
+        return {
+          type: 'tool_result',
+          tool_use_id: block.id,
+          content: JSON.stringify(agentResponse),
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const errorResponse: AgentResponse = {
+          ok: false,
+          error: { kind: 'capability-error', message },
+        };
+        config.onToolResult?.(ns, cap.name, errorResponse);
+        return {
+          type: 'tool_result',
+          tool_use_id: block.id,
+          is_error: true,
+          content: JSON.stringify(errorResponse),
+        };
+      }
+    }
+
     // Custom (non-entity) tool — route to extraToolHandlers if registered.
     // Note: Anthropic server tools (web_search, etc.) execute server-side and
     // never reach this handler — they appear as separate content blocks.

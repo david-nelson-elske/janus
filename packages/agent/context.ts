@@ -7,6 +7,7 @@
 
 import type {
   AgentInteractionLevel,
+  CapabilityRecord,
   CompileResult,
   Operation,
   QueryFieldRecord,
@@ -158,6 +159,38 @@ export function discoverTools(
   }
 
   return Object.freeze(tools);
+}
+
+// ── Capability discovery ─────────────────────────────────────
+
+export interface DiscoverCapabilitiesOptions {
+  /** Allowlist by capability name. When set, only these capabilities are returned. */
+  readonly include?: readonly string[];
+  /** Allowlist by tag — a capability matches if any of its tags is in this list. */
+  readonly tags?: readonly string[];
+}
+
+/**
+ * Discover capabilities registered on the compiled registry.
+ *
+ * Returns CapabilityRecord[] in registry order. Filter via `include` (by name)
+ * or `tags` (any-match). When both are supplied, both must match.
+ */
+export function discoverCapabilities(
+  registry: CompileResult,
+  opts?: DiscoverCapabilitiesOptions,
+): readonly CapabilityRecord[] {
+  const all = Array.from(registry.capabilities.values());
+  let out = all;
+  if (opts?.include) {
+    const set = new Set(opts.include);
+    out = out.filter((c) => set.has(c.name));
+  }
+  if (opts?.tags?.length) {
+    const tagSet = new Set(opts.tags);
+    out = out.filter((c) => c.tags?.some((t) => tagSet.has(t)) ?? false);
+  }
+  return Object.freeze(out);
 }
 
 // ── Navigation tool discovery ─────────────────────────────────
