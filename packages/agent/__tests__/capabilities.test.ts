@@ -328,6 +328,7 @@ describe('dispatchCapability with audit', () => {
       initiator: surfaceName,
     });
     expect(result.ok).toBe(false);
+    expect(result.error?.kind).toBe('validation-error');
     expect(result.error?.message).toContain("requires field 'query'");
   });
 
@@ -475,6 +476,7 @@ describe('dispatchCapability with audit', () => {
       initiator: surfaceName,
     });
     expect(result.ok).toBe(false);
+    expect(result.error?.kind).toBe('validation-error');
     expect(result.error?.message).toContain("expected one of a, b, c");
   });
 

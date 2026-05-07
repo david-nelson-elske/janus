@@ -210,7 +210,10 @@ function parseCapabilityInput(
 
     if (value === undefined || value === null || value === '') {
       if (required) {
-        throw new Error(`Capability '${cap.name}' requires field '${field}'`);
+        throw Object.assign(
+          new Error(`Capability '${cap.name}' requires field '${field}'`),
+          { kind: 'validation-error', retryable: false },
+        );
       }
       continue;
     }
@@ -222,8 +225,11 @@ function parseCapabilityInput(
       if (fieldDef.kind === 'enum') {
         const values = (fieldDef as unknown as { values: readonly string[] }).values;
         if (Array.isArray(values) && !values.includes(coerced as string)) {
-          throw new Error(
-            `Capability '${cap.name}' field '${field}' got '${String(coerced)}', expected one of ${values.join(', ')}`,
+          throw Object.assign(
+            new Error(
+              `Capability '${cap.name}' field '${field}' got '${String(coerced)}', expected one of ${values.join(', ')}`,
+            ),
+            { kind: 'validation-error', retryable: false },
           );
         }
       }
