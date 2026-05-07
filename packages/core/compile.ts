@@ -23,6 +23,7 @@ import type {
   AdapterKind,
   BindingIndex,
   BindingRecord,
+  CapabilityRecord,
   CompileFilter,
   CompileResult,
   DeclarationRecord,
@@ -491,6 +492,7 @@ export function compile(
   const allParticipations: ParticipationRecord[] = [];
   const allSubscriptions: SubscriptionRecord[] = [];
   const allBindings: BindingRecord[] = [];
+  const capabilities = new Map<string, CapabilityRecord>();
   const allDrops = new Set<string>();
 
   for (const decl of declarations) {
@@ -506,6 +508,14 @@ export function compile(
       case 'participate':
         allParticipations.push(...decl.records);
         break;
+      case 'capability': {
+        const { name } = decl.record;
+        if (capabilities.has(name)) {
+          throw new Error(`Duplicate capability name: '${name}'`);
+        }
+        capabilities.set(name, decl.record);
+        break;
+      }
       case 'subscribe':
         allSubscriptions.push(...decl.records);
         break;
@@ -697,6 +707,7 @@ export function compile(
     participations: Object.freeze([...allParticipations]),
     subscriptions: Object.freeze([...allSubscriptions]),
     bindings: Object.freeze([...allBindings]),
+    capabilities,
     dispatchIndex,
     initiators: initiatorsMap,
     persistRouting: Object.freeze(persistRouting),
@@ -712,6 +723,10 @@ export function compile(
 
     entity(name: string) {
       return graphNodes.get(name);
+    },
+
+    capability(name: string) {
+      return capabilities.get(name);
     },
 
     participationsFor(entity: string) {

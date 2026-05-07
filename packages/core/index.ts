@@ -7,6 +7,7 @@
 // ── Consumer API ────────────────────────────────────────────────
 
 export { define, deriveOperations } from './define';
+export { defineCapability } from './define-capability';
 export { participate } from './participate';
 export { subscribe } from './subscribe';
 export { bind } from './bind';
@@ -60,6 +61,13 @@ export type {
   FailurePolicy,
   RetryConfig,
   HandlerColumn,
+
+  // Capability
+  CapabilityConfig,
+  CapabilityContext,
+  CapabilityHandler,
+  CapabilityRecord,
+  CapabilityResult,
 
   // Subscription
   EventTrigger,
@@ -162,6 +170,8 @@ export {
   ENTITY_NAME,
   FIELD_NAME,
   MAX_ENTITY_NAME_LENGTH,
+  CAPABILITY_NAME,
+  MAX_CAPABILITY_NAME_LENGTH,
   Handler,
   MUTABLE_CTX_FIELDS,
   copyOwnCtxFields,

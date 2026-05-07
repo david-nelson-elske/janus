@@ -409,6 +409,78 @@ export interface ParticipateResult {
   readonly records: readonly ParticipationRecord[];
 }
 
+// ── Capability types ────────────────────────────────────────────
+
+/**
+ * Capability primitive — peer to define()/participate() for operations that
+ * are not entity-shaped: typed input → handler → typed output. Capabilities
+ * carry their own input schema, opt-in audit, and identity propagation,
+ * without requiring a synthetic entity to host them.
+ */
+
+export const CAPABILITY_NAME = /^[a-z][a-z0-9]*(_[a-z0-9]+)*__[a-z][a-z0-9]*(_[a-z0-9]+)*$/;
+export const MAX_CAPABILITY_NAME_LENGTH = 64;
+
+export interface CapabilityContext {
+  readonly identity: Identity;
+  /** Internal dispatch for nested entity-graph calls. May be undefined in tests. */
+  readonly dispatch?: InternalDispatch;
+  /** Cooperative cancellation. Best-effort; agent loop currently does not enforce timeouts. */
+  readonly signal?: AbortSignal;
+  /** Correlation id propagated from caller for log/audit chaining. */
+  readonly correlationId: string;
+}
+
+export type CapabilityHandler<TInput = unknown, TOutput = unknown> = (
+  input: TInput,
+  ctx: CapabilityContext,
+) => Promise<TOutput>;
+
+export interface CapabilityConfig<TInput = unknown, TOutput = unknown> {
+  /** Tool name. Must match `namespace__verb`. */
+  readonly name: string;
+  /** One-line description for the tool catalog. */
+  readonly description: string;
+  /** Optional longer description for system-prompt context. */
+  readonly longDescription?: string;
+  /** Input field schema using Janus semantic types (Str, Int, Enum, etc.). */
+  readonly inputSchema: Readonly<Record<string, SchemaField>>;
+  /** Optional output schema. Used by MCP for structured returns; ignored by Anthropic tool API. */
+  readonly outputSchema?: Readonly<Record<string, SchemaField>>;
+  /** The handler. Receives validated input + a CapabilityContext. */
+  readonly handler: CapabilityHandler<TInput, TOutput>;
+  /** Cross-cutting concerns. All optional; reuse the same shapes as participate(). */
+  readonly policy?: PolicyConfig;
+  readonly rateLimit?: RateLimitConfig;
+  readonly audit?: AuditLevel | AuditConfig;
+  /**
+   * If true, fire onToolCall/onToolResult hooks but do not write a capability_call
+   * row. Cheaper than `audit` for high-cardinality tool calls.
+   */
+  readonly observe?: boolean;
+  /** Tags for grouping in the agent's system prompt and for filter allowlists. */
+  readonly tags?: readonly string[];
+}
+
+export interface CapabilityRecord {
+  readonly name: string;
+  readonly description: string;
+  readonly longDescription?: string;
+  readonly inputSchema: Readonly<Record<string, SchemaField>>;
+  readonly outputSchema?: Readonly<Record<string, SchemaField>>;
+  readonly handler: CapabilityHandler;
+  readonly policy?: PolicyConfig;
+  readonly rateLimit?: RateLimitConfig;
+  readonly audit?: AuditLevel | AuditConfig;
+  readonly observe?: boolean;
+  readonly tags?: readonly string[];
+}
+
+export interface CapabilityResult {
+  readonly kind: 'capability';
+  readonly record: CapabilityRecord;
+}
+
 // ── Subscription types (M7) ─────────────────────────────────────
 
 export interface EventTrigger {
@@ -620,6 +692,7 @@ export interface DropResult {
 export type DeclarationRecord =
   | DefineResult
   | ParticipateResult
+  | CapabilityResult
   | SubscribeResult
   | BindResult
   | DropResult;
@@ -1016,6 +1089,7 @@ export interface CompileResult {
   readonly participations: readonly ParticipationRecord[];
   readonly subscriptions: readonly SubscriptionRecord[];
   readonly bindings: readonly BindingRecord[];
+  readonly capabilities: ReadonlyMap<string, CapabilityRecord>;
 
   // Dispatch
   readonly dispatchIndex: ReadonlyMap<string, FrozenPipeline>;
@@ -1040,6 +1114,7 @@ export interface CompileResult {
   // Query helpers
   pipeline(initiator: string, entity: string, operation: string): FrozenPipeline | undefined;
   entity(name: string): GraphNodeRecord | undefined;
+  capability(name: string): CapabilityRecord | undefined;
   participationsFor(entity: string): readonly ParticipationRecord[];
   operationsFor(entity: string): readonly Operation[];
   queryFields(entity: string): readonly QueryFieldRecord[];
