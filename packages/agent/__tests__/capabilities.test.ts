@@ -12,7 +12,7 @@ import {
   defineCapability,
 } from '@janus/core';
 import type { CapabilityContext, CompileResult } from '@janus/core';
-import { Str, Int, Enum } from '@janus/vocabulary';
+import { Str, Int, Enum, AuditFull } from '@janus/vocabulary';
 import {
   registerHandlers,
   createDispatchRuntime,
@@ -27,7 +27,9 @@ import {
   discoverCapabilities,
   toClaudeToolsFromCapabilities,
   createAgentLoop,
+  dispatchCapability,
 } from '..';
+import { SYSTEM } from '@janus/core';
 
 const noopHandler = async (_input: unknown, _ctx: CapabilityContext) => ({ ok: true });
 
@@ -260,5 +262,174 @@ describe('createAgentLoop with capabilities', () => {
     const names = loop.tools.map((t) => 'name' in t ? t.name : '');
     expect(names).not.toContain('drive__search');
     expect(names).not.toContain('web__fetch');
+  });
+});
+
+// ── dispatchCapability + audit ─────────────────────────────────
+
+describe('dispatchCapability with audit', () => {
+  test('returns ok=true when handler succeeds', async () => {
+    const cap = defineCapability({
+      name: 'echo__call',
+      description: 'echo input',
+      inputSchema: { msg: Str({ required: true }) },
+      handler: async (input) => ({ echoed: input }),
+    });
+    await bootRegistry([cap]);
+
+    const result = await dispatchCapability({
+      cap: cap.record,
+      input: { msg: 'hi' },
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.data).toEqual({ echoed: { msg: 'hi' } });
+  });
+
+  test('returns capability-error when handler throws', async () => {
+    const cap = defineCapability({
+      name: 'fail__call',
+      description: 'always fails',
+      inputSchema: { x: Str() },
+      handler: async () => { throw new Error('boom'); },
+    });
+    await bootRegistry([cap]);
+
+    const result = await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error?.kind).toBe('capability-error');
+    expect(result.error?.message).toBe('boom');
+  });
+
+  test('rejects missing required input', async () => {
+    const cap = defineCapability({
+      name: 'req__call',
+      description: 'requires query',
+      inputSchema: { query: Str({ required: true }) },
+      handler: async () => ({ ok: true }),
+    });
+    await bootRegistry([cap]);
+
+    const result = await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toContain("requires field 'query'");
+  });
+
+  test('fires onToolCall and onToolResult with namespace', async () => {
+    const cap = defineCapability({
+      name: 'drive__search',
+      description: 'x',
+      inputSchema: { query: Str({ required: true }) },
+      handler: async () => ({ files: [] }),
+    });
+    await bootRegistry([cap]);
+
+    const calls: Array<[string, string]> = [];
+    const results: Array<[string, string, boolean]> = [];
+    await dispatchCapability({
+      cap: cap.record,
+      input: { query: 'q' },
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+      onToolCall: (ns, name) => calls.push([ns, name]),
+      onToolResult: (ns, name, res) => results.push([ns, name, res.ok]),
+    });
+    expect(calls).toEqual([['drive', 'drive__search']]);
+    expect(results).toEqual([['drive', 'drive__search', true]]);
+  });
+
+  test('does not write capability_call row when audit unset', async () => {
+    const cap = defineCapability({
+      name: 'silent__call',
+      description: 'no audit',
+      inputSchema: { x: Str() },
+      handler: async () => ({ ok: true }),
+    });
+    await bootRegistry([cap]);
+
+    await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+    });
+
+    const rows = await runtime.dispatch('system', 'capability_call', 'read', {}, SYSTEM);
+    expect(rows.ok).toBe(true);
+    const data = rows.data as { records: unknown[] };
+    expect(data.records.length).toBe(0);
+  });
+
+  test('writes capability_call row when audit set, on success', async () => {
+    const cap = defineCapability({
+      name: 'audited__call',
+      description: 'audited',
+      inputSchema: { x: Str() },
+      audit: AuditFull,
+      handler: async () => ({ result: 42 }),
+    });
+    await bootRegistry([cap]);
+
+    await dispatchCapability({
+      cap: cap.record,
+      input: { x: 'hi' },
+      identity: { id: 'user-1', roles: ['user'] },
+      runtime,
+      initiator: surfaceName,
+    });
+
+    const rows = await runtime.dispatch('system', 'capability_call', 'read', {}, SYSTEM);
+    const data = rows.data as { records: Array<Record<string, unknown>> };
+    expect(data.records.length).toBe(1);
+    const row = data.records[0];
+    expect(row.capability_name).toBe('audited__call');
+    expect(row.ok).toBe(true);
+    expect(row.identity_id).toBe('user-1');
+    expect(row.input).toEqual({ x: 'hi' });
+    expect(row.output).toEqual({ result: 42 });
+    expect(typeof row.duration_ms).toBe('number');
+    expect(row.error).toBeFalsy();
+  });
+
+  test('writes capability_call row with error on failure', async () => {
+    const cap = defineCapability({
+      name: 'audited_fail__call',
+      description: 'audited fail',
+      inputSchema: { x: Str() },
+      audit: AuditFull,
+      handler: async () => { throw new Error('nope'); },
+    });
+    await bootRegistry([cap]);
+
+    await dispatchCapability({
+      cap: cap.record,
+      input: { x: 'y' },
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+    });
+
+    const rows = await runtime.dispatch('system', 'capability_call', 'read', {}, SYSTEM);
+    const data = rows.data as { records: Array<Record<string, unknown>> };
+    expect(data.records.length).toBe(1);
+    const row = data.records[0];
+    expect(row.ok).toBe(false);
+    expect(row.error).toBe('nope');
   });
 });

@@ -24,12 +24,12 @@ afterEach(() => {
 });
 
 describe('frameworkEntities', () => {
-  test('has 7 entities', () => {
-    expect(frameworkEntities).toHaveLength(7);
+  test('has 8 entities', () => {
+    expect(frameworkEntities).toHaveLength(8);
   });
 
-  test('has 7 participations', () => {
-    expect(frameworkParticipations).toHaveLength(7);
+  test('has 8 participations', () => {
+    expect(frameworkParticipations).toHaveLength(8);
   });
 });
 

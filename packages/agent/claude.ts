@@ -196,6 +196,128 @@ function capabilityNamespace(name: string): string {
   return idx === -1 ? name : name.slice(0, idx);
 }
 
+// ── Capability dispatch helper ──────────────────────────────────
+
+export interface DispatchCapabilityConfig {
+  readonly cap: CapabilityRecord;
+  readonly input: unknown;
+  readonly identity: Identity;
+  readonly runtime: DispatchRuntime;
+  readonly initiator: string;
+  readonly onToolCall?: (namespace: string, toolName: string, input: unknown) => void;
+  readonly onToolResult?: (namespace: string, toolName: string, result: AgentResponse) => void;
+}
+
+/**
+ * Run a capability handler with audit + observability hooks. Returns the
+ * AgentResponse the agent loop should serialize into the tool_result block.
+ *
+ * Extracted from handleToolUse() so the dispatch path can be unit-tested
+ * without spinning up an Anthropic mock.
+ */
+export async function dispatchCapability(
+  config: DispatchCapabilityConfig,
+): Promise<AgentResponse> {
+  const { cap, runtime, initiator } = config;
+  const ns = capabilityNamespace(cap.name);
+  const correlationId = crypto.randomUUID();
+  const startedAt = Date.now();
+
+  config.onToolCall?.(ns, cap.name, config.input);
+
+  let parsedInput: Record<string, unknown> = {};
+  try {
+    parsedInput = parseCapabilityInput(cap, config.input);
+    const internalDispatch: InternalDispatch = (entity, operation, opInput, opIdentity) =>
+      runtime.dispatch(initiator, entity, operation, opInput, opIdentity);
+    const ctx: CapabilityContext = {
+      identity: config.identity,
+      dispatch: internalDispatch,
+      correlationId,
+    };
+    const result = await cap.handler(parsedInput, ctx);
+    const response: AgentResponse = { ok: true, data: result };
+    config.onToolResult?.(ns, cap.name, response);
+    await writeCapabilityAudit(cap, {
+      ok: true,
+      startedAt,
+      correlationId,
+      identityId: config.identity.id,
+      input: parsedInput,
+      output: result,
+      runtime,
+    });
+    return response;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const response: AgentResponse = {
+      ok: false,
+      error: { kind: 'capability-error', message },
+    };
+    config.onToolResult?.(ns, cap.name, response);
+    await writeCapabilityAudit(cap, {
+      ok: false,
+      startedAt,
+      correlationId,
+      identityId: config.identity.id,
+      input: parsedInput,
+      error: message,
+      runtime,
+    });
+    return response;
+  }
+}
+
+/**
+ * Write a capability_call audit row when the capability declares `audit`.
+ * Goes through the system initiator since capability_call is a framework
+ * entity. Failures here are swallowed to logger output — auditing should
+ * never break dispatch.
+ */
+async function writeCapabilityAudit(
+  cap: CapabilityRecord,
+  args: {
+    ok: boolean;
+    startedAt: number;
+    correlationId: string;
+    identityId: string;
+    input: Record<string, unknown>;
+    output?: unknown;
+    error?: string;
+    runtime: DispatchRuntime;
+  },
+): Promise<void> {
+  if (!cap.audit) return;
+  // audit can be an AuditLevel ({ kind: 'full' | 'light' | 'none' }) or an
+  // AuditConfig wrapper. AuditNone explicitly suppresses the write.
+  const level =
+    'level' in cap.audit ? cap.audit.level : cap.audit;
+  if (level && 'kind' in level && level.kind === 'none') return;
+  try {
+    await args.runtime.dispatch(
+      'system',
+      'capability_call',
+      'create',
+      {
+        capability_name: cap.name,
+        run_at: new Date(args.startedAt).toISOString(),
+        duration_ms: Date.now() - args.startedAt,
+        ok: args.ok,
+        correlation_id: args.correlationId,
+        identity_id: args.identityId,
+        input: args.input,
+        output: args.output,
+        error: args.error,
+      },
+      SYSTEM,
+    );
+  } catch (err) {
+    // Auditing failures must not break the dispatch path.
+    // eslint-disable-next-line no-console
+    console.error(`[capability-audit] failed to write capability_call for '${cap.name}':`, err);
+  }
+}
+
 // ── Agent loop ──────────────────────────────────────────────────
 
 export interface AgentLoopConfig {
@@ -389,40 +511,22 @@ export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
     // search; the lookup is unambiguous.
     const cap = capabilityByName.get(block.name);
     if (cap) {
-      const ns = capabilityNamespace(cap.name);
-      config.onToolCall?.(ns, cap.name, block.input);
-      try {
-        const input = parseCapabilityInput(cap, block.input);
-        const id = (typeof config.identity === 'function' ? config.identity() : config.identity) ?? SYSTEM;
-        const internalDispatch: InternalDispatch = (entity, operation, op_input, op_id) =>
-          config.runtime.dispatch(initiator, entity, operation, op_input, op_id);
-        const ctx: CapabilityContext = {
-          identity: id,
-          dispatch: internalDispatch,
-          correlationId: crypto.randomUUID(),
-        };
-        const result = await cap.handler(input, ctx);
-        const agentResponse: AgentResponse = { ok: true, data: result };
-        config.onToolResult?.(ns, cap.name, agentResponse);
-        return {
-          type: 'tool_result',
-          tool_use_id: block.id,
-          content: JSON.stringify(agentResponse),
-        };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const errorResponse: AgentResponse = {
-          ok: false,
-          error: { kind: 'capability-error', message },
-        };
-        config.onToolResult?.(ns, cap.name, errorResponse);
-        return {
-          type: 'tool_result',
-          tool_use_id: block.id,
-          is_error: true,
-          content: JSON.stringify(errorResponse),
-        };
-      }
+      const id = (typeof config.identity === 'function' ? config.identity() : config.identity) ?? SYSTEM;
+      const response = await dispatchCapability({
+        cap,
+        input: block.input,
+        identity: id,
+        runtime: config.runtime,
+        initiator,
+        onToolCall: config.onToolCall,
+        onToolResult: config.onToolResult,
+      });
+      return {
+        type: 'tool_result',
+        tool_use_id: block.id,
+        ...(response.ok ? {} : { is_error: true as const }),
+        content: JSON.stringify(response),
+      };
     }
 
     // Custom (non-entity) tool — route to extraToolHandlers if registered.

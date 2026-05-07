@@ -9,7 +9,7 @@
  */
 
 import { define, participate } from '@janus/core';
-import { Str, Int, DateTime, Json, Enum, Reference, Token, Lifecycle, Singleton, Persistent, Volatile, hours } from '@janus/vocabulary';
+import { Str, Int, Bool, DateTime, Json, Enum, Reference, Token, Lifecycle, Singleton, Persistent, Volatile, hours } from '@janus/vocabulary';
 
 /**
  * execution_log — records what pipeline concerns and subscription adapters did.
@@ -215,5 +215,44 @@ export const sessionParticipation = participate(session, {
   ] },
 });
 
-export const frameworkEntities = [executionLog, agentSession, connectorBinding, asset, template, oidcProvider, session];
-export const frameworkParticipations = [executionLogParticipation, agentSessionParticipation, connectorBindingParticipation, assetParticipation, templateParticipation, oidcProviderParticipation, sessionParticipation];
+// ── capability_call — audit trail for capability invocations ──
+
+/**
+ * Generic audit row for capability dispatches. Written by the agent layer
+ * when a capability declares `audit`. Replaces the per-action audit hack
+ * in synthetic `command` entities.
+ *
+ * Input/output stored as JSON blobs for now; per-capability redaction is
+ * planned but not yet wired.
+ */
+export const capabilityCall = define('capability_call', {
+  schema: {
+    capability_name: Str({ required: true }),
+    run_at: DateTime({ required: true }),
+    duration_ms: Int({ required: true }),
+    ok: Bool({ required: true }),
+    correlation_id: Str(),
+    identity_id: Str(),
+    input: Json(),
+    output: Json(),
+    error: Str(),
+  },
+  indexes: [
+    { fields: ['capability_name'], unique: false },
+    { fields: ['run_at'], unique: false },
+  ],
+  storage: Persistent(),
+  description: 'Audit trail for capability invocations',
+  origin: 'framework',
+});
+
+export const capabilityCallParticipation = participate(capabilityCall, {
+  // Let schema-parse run so JSON columns (input/output) and required fields
+  // are coerced normally. validate: false because audit rows have no
+  // lifecycle/ownership semantics to enforce.
+  validate: false,
+  emit: false,     // never emit events for audit rows (avoid recursion)
+});
+
+export const frameworkEntities = [executionLog, agentSession, connectorBinding, asset, template, oidcProvider, session, capabilityCall];
+export const frameworkParticipations = [executionLogParticipation, agentSessionParticipation, connectorBindingParticipation, assetParticipation, templateParticipation, oidcProviderParticipation, sessionParticipation, capabilityCallParticipation];
