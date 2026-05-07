@@ -421,10 +421,29 @@ export interface ParticipateResult {
 export const CAPABILITY_NAME = /^[a-z][a-z0-9]*(_[a-z0-9]+)*__[a-z][a-z0-9]*(_[a-z0-9]+)*$/;
 export const MAX_CAPABILITY_NAME_LENGTH = 64;
 
+/**
+ * The shape returned to a capability that calls another capability by name
+ * via ctx.callCapability. Identical to AgentResponse, redeclared here so
+ * @janus/core can describe it without depending on @janus/agent.
+ */
+export interface CapabilityResponse {
+  readonly ok: boolean;
+  readonly data?: unknown;
+  readonly error?: { readonly kind: string; readonly message: string };
+}
+
 export interface CapabilityContext {
   readonly identity: Identity;
   /** Internal dispatch for nested entity-graph calls. May be undefined in tests. */
   readonly dispatch?: InternalDispatch;
+  /**
+   * Invoke another capability by name from within this handler. Returns
+   * the same CapabilityResponse shape that dispatchCapability produces.
+   * Recursion is bounded — exceeding MAX_CAPABILITY_DEPTH throws a
+   * 'capability-depth-exceeded' error response. Undefined when the
+   * dispatch path didn't supply a registry to resolve names against.
+   */
+  readonly callCapability?: (name: string, input: unknown) => Promise<CapabilityResponse>;
   /**
    * Compiled registry — gives capabilities access to entity metadata,
    * other capabilities, and binding info without round-tripping through
@@ -435,7 +454,15 @@ export interface CapabilityContext {
   readonly signal?: AbortSignal;
   /** Correlation id propagated from caller for log/audit chaining. */
   readonly correlationId: string;
+  /**
+   * Nested-call depth for cycle detection. 0 for top-level dispatches,
+   * incremented through every ctx.callCapability hop.
+   */
+  readonly depth?: number;
 }
+
+/** Hard cap on capability composition depth. Prevents accidental cycles. */
+export const MAX_CAPABILITY_DEPTH = 8;
 
 export type CapabilityHandler<TInput = unknown, TOutput = unknown> = (
   input: TInput,

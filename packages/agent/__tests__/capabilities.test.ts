@@ -910,6 +910,153 @@ describe('dispatchCapability rate limit', () => {
   });
 });
 
+// ── Capability composition ──────────────────────────────────────
+
+describe('ctx.callCapability', () => {
+  test('a capability can invoke another by name', async () => {
+    const inner = defineCapability({
+      name: 'math__double',
+      description: 'doubles',
+      inputSchema: { n: Int({ required: true }) },
+      handler: async ({ n }: { n: number }) => ({ result: n * 2 }),
+    });
+    const outer = defineCapability({
+      name: 'math__quad',
+      description: 'quads via double',
+      inputSchema: { n: Int({ required: true }) },
+      handler: async ({ n }: { n: number }, ctx: CapabilityContext) => {
+        if (!ctx.callCapability) throw new Error('callCapability missing');
+        const a = await ctx.callCapability('math__double', { n });
+        if (!a.ok) throw new Error('inner failed');
+        const b = await ctx.callCapability('math__double', { n: (a.data as { result: number }).result });
+        return { result: (b.data as { result: number }).result };
+      },
+    });
+    await bootRegistry([inner, outer]);
+
+    const result = await dispatchCapability({
+      cap: outer.record,
+      input: { n: 3 },
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+      registry,
+    });
+    expect(result.ok).toBe(true);
+    expect((result.data as { result: number }).result).toBe(12);
+  });
+
+  test('callCapability reports unknown capability without throwing', async () => {
+    let observedResponse: unknown = null;
+    const cap = defineCapability({
+      name: 'caller__call',
+      description: 'tries unknown',
+      inputSchema: {},
+      handler: async (_input: unknown, ctx: CapabilityContext) => {
+        if (!ctx.callCapability) throw new Error('callCapability missing');
+        observedResponse = await ctx.callCapability('does__not_exist', {});
+        return { observed: !!observedResponse };
+      },
+    });
+    await bootRegistry([cap]);
+
+    await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+      registry,
+    });
+    const r = observedResponse as { ok: boolean; error?: { kind: string } };
+    expect(r.ok).toBe(false);
+    expect(r.error?.kind).toBe('capability-not-found');
+  });
+
+  test('callCapability is undefined when no registry supplied', async () => {
+    let observedAvailable = true;
+    const cap = defineCapability({
+      name: 'standalone__call',
+      description: 'no reg',
+      inputSchema: {},
+      handler: async (_input: unknown, ctx: CapabilityContext) => {
+        observedAvailable = !!ctx.callCapability;
+        return null;
+      },
+    });
+    await bootRegistry([cap]);
+
+    await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+      // no registry
+    });
+    expect(observedAvailable).toBe(false);
+  });
+
+  test('depth tracking caps recursion at MAX_CAPABILITY_DEPTH', async () => {
+    // A capability that recurses into itself unconditionally.
+    const recursive = defineCapability({
+      name: 'inf__loop',
+      description: 'loops forever',
+      inputSchema: {},
+      handler: async (_input: unknown, ctx: CapabilityContext) => {
+        if (!ctx.callCapability) return { stopped: true };
+        return ctx.callCapability('inf__loop', {});
+      },
+    });
+    await bootRegistry([recursive]);
+
+    const result = await dispatchCapability({
+      cap: recursive.record,
+      input: {},
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+      registry,
+    });
+    // Each recursive call returns the inner response, so the outermost
+    // dispatch ultimately succeeds with the depth-exceeded error nested
+    // inside its data. Walk down to find it.
+    let cur: unknown = result;
+    while (cur && typeof cur === 'object' && 'data' in (cur as object)) {
+      const next = (cur as { data?: unknown }).data;
+      if (!next || typeof next !== 'object') break;
+      cur = next;
+    }
+    const final = cur as { ok?: boolean; error?: { kind?: string } };
+    expect(final.ok).toBe(false);
+    expect(final.error?.kind).toBe('capability-depth-exceeded');
+  });
+
+  test('depth is exposed on CapabilityContext', async () => {
+    let observedDepth = -1;
+    const cap = defineCapability({
+      name: 'depth__check',
+      description: 'd',
+      inputSchema: {},
+      handler: async (_input: unknown, ctx: CapabilityContext) => {
+        observedDepth = ctx.depth ?? -1;
+        return null;
+      },
+    });
+    await bootRegistry([cap]);
+
+    await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+      registry,
+    });
+    expect(observedDepth).toBe(0);
+  });
+});
+
 // ── Timeout enforcement ─────────────────────────────────────────
 
 describe('dispatchCapability timeout', () => {

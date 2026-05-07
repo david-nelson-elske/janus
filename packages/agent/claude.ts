@@ -7,8 +7,8 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import type { CapabilityContext, CapabilityRecord, CompileResult, Identity, InternalDispatch, PolicyConfig, SchemaField } from '@janus/core';
-import { ANONYMOUS, SYSTEM } from '@janus/core';
+import type { CapabilityContext, CapabilityRecord, CapabilityResponse, CompileResult, Identity, InternalDispatch, PolicyConfig, SchemaField } from '@janus/core';
+import { ANONYMOUS, MAX_CAPABILITY_DEPTH, SYSTEM } from '@janus/core';
 import { isSemanticField } from '@janus/vocabulary';
 import type { DispatchRuntime, RateLimitStore } from '@janus/pipeline';
 import { createRateLimitStore } from '@janus/pipeline';
@@ -336,6 +336,11 @@ export interface DispatchCapabilityConfig {
    * automatically.
    */
   readonly registry?: CompileResult;
+  /**
+   * Nested-call depth. Set by dispatchCapability when invoked recursively
+   * via ctx.callCapability. Top-level callers leave it unset (defaults to 0).
+   */
+  readonly depth?: number;
 }
 
 /**
@@ -355,6 +360,19 @@ export async function dispatchCapability(
 
   config.onToolCall?.(ns, cap.name, config.input);
 
+  const depth = config.depth ?? 0;
+  if (depth > MAX_CAPABILITY_DEPTH) {
+    const response: AgentResponse = {
+      ok: false,
+      error: {
+        kind: 'capability-depth-exceeded',
+        message: `Capability call depth exceeded ${MAX_CAPABILITY_DEPTH} (last: '${cap.name}')`,
+      },
+    };
+    config.onToolResult?.(ns, cap.name, response);
+    return response;
+  }
+
   let parsedInput: Record<string, unknown> = {};
   // Hold the timeout's abort handle outside try/finally so the catch can clear it.
   let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
@@ -366,6 +384,38 @@ export async function dispatchCapability(
     parsedInput = parseCapabilityInput(cap, config.input);
     const internalDispatch: InternalDispatch = (entity, operation, opInput, opIdentity) =>
       runtime.dispatch(initiator, entity, operation, opInput, opIdentity);
+
+    // Build the per-handler callCapability closure. Resolves the named
+    // capability against the registry (if supplied), bumps depth, and
+    // recurses through dispatchCapability so all concerns (policy,
+    // rate-limit, audit, timeout) apply identically to nested calls.
+    const callCapability: CapabilityContext['callCapability'] | undefined = config.registry
+      ? async (name, input): Promise<CapabilityResponse> => {
+          const target = config.registry!.capability(name);
+          if (!target) {
+            return {
+              ok: false,
+              error: {
+                kind: 'capability-not-found',
+                message: `Unknown capability '${name}' invoked from '${cap.name}'`,
+              },
+            };
+          }
+          return dispatchCapability({
+            cap: target,
+            input,
+            identity: config.identity,
+            runtime,
+            initiator,
+            onToolCall: config.onToolCall,
+            onToolResult: config.onToolResult,
+            registry: config.registry,
+            rateLimitStore: config.rateLimitStore,
+            signal: config.signal,
+            depth: depth + 1,
+          });
+        }
+      : undefined;
 
     // Build the signal handed to the handler. If the caller supplied one,
     // link it so caller-driven aborts still propagate. If a timeout is
@@ -387,6 +437,8 @@ export async function dispatchCapability(
       identity: config.identity,
       dispatch: internalDispatch,
       correlationId,
+      depth,
+      ...(callCapability ? { callCapability } : {}),
       ...(config.registry ? { registry: config.registry } : {}),
       // Always set signal — handlers expecting cancellation can rely on it
       // even when the caller didn't provide one (e.g. when only a timeout

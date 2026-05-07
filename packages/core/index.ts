@@ -67,6 +67,7 @@ export type {
   CapabilityContext,
   CapabilityHandler,
   CapabilityRecord,
+  CapabilityResponse,
   CapabilityResult,
 
   // Subscription
@@ -172,6 +173,7 @@ export {
   MAX_ENTITY_NAME_LENGTH,
   CAPABILITY_NAME,
   MAX_CAPABILITY_NAME_LENGTH,
+  MAX_CAPABILITY_DEPTH,
   Handler,
   MUTABLE_CTX_FIELDS,
   copyOwnCtxFields,
