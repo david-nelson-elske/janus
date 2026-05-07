@@ -169,25 +169,71 @@ export function toClaudeToolsFromCapabilities(
 }
 
 /**
- * Validate raw input against a capability's inputSchema.
- * Phase 1: enforces required fields only; coercion left for a later commit.
+ * Coerce a raw value to its semantic-type-implied JS shape.
+ * Mirrors the entity-side schema-parse coercion so capability inputs
+ * arriving as strings (common over HTTP/JSON) land as numbers/booleans.
+ */
+function coerceCapabilityValue(value: unknown, kind: string): unknown {
+  if (value === null || value === undefined) return value;
+  switch (kind) {
+    case 'int':
+    case 'intcents':
+    case 'intbps':
+    case 'duration':
+      return typeof value === 'string' ? Number.parseInt(value, 10) : value;
+    case 'float':
+      return typeof value === 'string' ? Number.parseFloat(value) : value;
+    case 'bool':
+      if (typeof value === 'string') return value === 'true' || value === '1';
+      return value;
+    default:
+      return value;
+  }
+}
+
+/**
+ * Validate + coerce raw input against a capability's inputSchema.
+ * Throws on missing required fields and out-of-range enum values.
+ * Coerces string-encoded numbers and booleans to their JS types.
  */
 function parseCapabilityInput(
   cap: CapabilityRecord,
   raw: unknown,
 ): Record<string, unknown> {
   const input = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const parsed: Record<string, unknown> = {};
+
   for (const [field, fieldDef] of Object.entries(cap.inputSchema)) {
-    if (isSemanticField(fieldDef) && fieldDef.hints?.required) {
-      const value = input[field];
-      if (value === undefined || value === null || value === '') {
-        throw new Error(
-          `Capability '${cap.name}' requires field '${field}'`,
-        );
+    const value = input[field];
+    const required = isSemanticField(fieldDef) && fieldDef.hints?.required;
+
+    if (value === undefined || value === null || value === '') {
+      if (required) {
+        throw new Error(`Capability '${cap.name}' requires field '${field}'`);
       }
+      continue;
+    }
+
+    if (isSemanticField(fieldDef)) {
+      const coerced = coerceCapabilityValue(value, fieldDef.kind);
+
+      // Enum membership check after coercion (enum is always string-typed).
+      if (fieldDef.kind === 'enum') {
+        const values = (fieldDef as unknown as { values: readonly string[] }).values;
+        if (Array.isArray(values) && !values.includes(coerced as string)) {
+          throw new Error(
+            `Capability '${cap.name}' field '${field}' got '${String(coerced)}', expected one of ${values.join(', ')}`,
+          );
+        }
+      }
+
+      parsed[field] = coerced;
+    } else {
+      parsed[field] = value;
     }
   }
-  return input;
+
+  return parsed;
 }
 
 /** Extract the namespace prefix from a capability name (text before first '__'). */

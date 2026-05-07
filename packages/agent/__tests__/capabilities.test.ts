@@ -12,7 +12,7 @@ import {
   defineCapability,
 } from '@janus/core';
 import type { CapabilityContext, CompileResult } from '@janus/core';
-import { Str, Int, Enum, AuditFull } from '@janus/vocabulary';
+import { Str, Int, Bool, Enum, AuditFull } from '@janus/vocabulary';
 import {
   registerHandlers,
   createDispatchRuntime,
@@ -405,6 +405,98 @@ describe('dispatchCapability with audit', () => {
     expect(row.output).toEqual({ result: 42 });
     expect(typeof row.duration_ms).toBe('number');
     expect(row.error).toBeFalsy();
+  });
+
+  test('coerces string-encoded numbers to int/float', async () => {
+    let received: unknown = null;
+    const cap = defineCapability({
+      name: 'coerce__int',
+      description: 'coerces',
+      inputSchema: {
+        page: Int(),
+        rate: Str(), // would be Float() but easier to assert with Str fallback
+      },
+      handler: async (input: unknown) => {
+        received = input;
+        return { ok: true };
+      },
+    });
+    await bootRegistry([cap]);
+
+    await dispatchCapability({
+      cap: cap.record,
+      input: { page: '20' },
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+    });
+    expect(received).toEqual({ page: 20 });
+  });
+
+  test('coerces "true"/"false" strings to bool', async () => {
+    let received: unknown = null;
+    const cap = defineCapability({
+      name: 'coerce__bool',
+      description: 'b',
+      inputSchema: { flag: Bool() },
+      handler: async (input: unknown) => {
+        received = input;
+        return null;
+      },
+    });
+    await bootRegistry([cap]);
+
+    await dispatchCapability({
+      cap: cap.record,
+      input: { flag: 'true' },
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+    });
+    expect(received).toEqual({ flag: true });
+  });
+
+  test('rejects out-of-range enum values', async () => {
+    const cap = defineCapability({
+      name: 'enum__check',
+      description: 'e',
+      inputSchema: { mode: Enum(['a', 'b', 'c'], { required: true }) },
+      handler: async () => null,
+    });
+    await bootRegistry([cap]);
+
+    const result = await dispatchCapability({
+      cap: cap.record,
+      input: { mode: 'd' },
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toContain("expected one of a, b, c");
+  });
+
+  test('strips fields not declared in inputSchema', async () => {
+    let received: unknown = null;
+    const cap = defineCapability({
+      name: 'strict__call',
+      description: 's',
+      inputSchema: { keep: Str() },
+      handler: async (input: unknown) => {
+        received = input;
+        return null;
+      },
+    });
+    await bootRegistry([cap]);
+
+    await dispatchCapability({
+      cap: cap.record,
+      input: { keep: 'yes', drop: 'this' },
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+    });
+    expect(received).toEqual({ keep: 'yes' });
   });
 
   test('writes capability_call row with error on failure', async () => {
