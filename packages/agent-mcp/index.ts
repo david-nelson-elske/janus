@@ -6,6 +6,6 @@
  * in-process code, the Janus agent loop, and any MCP client.
  */
 
-export { buildMcpServer, plannedToolCount } from './server';
+export { buildMcpServer, plannedToolCount, serveCapabilitiesOnStdio } from './server';
 export type { BuildMcpServerConfig } from './server';
 export { semanticToZodShape } from './semantic-to-zod';

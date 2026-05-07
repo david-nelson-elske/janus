@@ -133,3 +133,28 @@ export function plannedToolCount(config: BuildMcpServerConfig): number {
     tags: config.capabilityTags,
   }).length;
 }
+
+/**
+ * One-liner: build an MCP server, connect it on stdio, and resolve once
+ * the transport is open. Use this when standing up a Claude Code Remote
+ * Control adapter or any other stdio-MCP entrypoint:
+ *
+ *   await serveCapabilitiesOnStdio({ registry, runtime });
+ *
+ * For non-stdio transports or post-connect inspection, call buildMcpServer
+ * directly and connect your own transport.
+ */
+export async function serveCapabilitiesOnStdio(
+  config: BuildMcpServerConfig,
+): Promise<{ server: McpServer; close: () => Promise<void> }> {
+  const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
+  const server = buildMcpServer(config);
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  return {
+    server,
+    close: async () => {
+      await server.close();
+    },
+  };
+}
