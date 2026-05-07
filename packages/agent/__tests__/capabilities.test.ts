@@ -550,20 +550,23 @@ describe('dispatchCapability with audit', () => {
     expect(observed).toBeUndefined();
   });
 
-  test('AbortSignal propagates to handler via CapabilityContext.signal', async () => {
-    let observedSignal: AbortSignal | undefined;
+  test('caller-supplied signal links to ctx.signal so handler observes aborts', async () => {
+    let abortedFromHandler = false;
     const cap = defineCapability({
       name: 'signal__check',
       description: 's',
       inputSchema: { x: Str() },
       handler: async (_input: unknown, ctx: CapabilityContext) => {
-        observedSignal = ctx.signal;
+        // Wait a tick, then check whether the linked signal flipped.
+        await new Promise((r) => setTimeout(r, 5));
+        abortedFromHandler = !!ctx.signal?.aborted;
         return null;
       },
     });
     await bootRegistry([cap]);
 
     const ac = new AbortController();
+    setTimeout(() => ac.abort('test-cancel'), 1);
     await dispatchCapability({
       cap: cap.record,
       input: {},
@@ -572,12 +575,12 @@ describe('dispatchCapability with audit', () => {
       initiator: surfaceName,
       signal: ac.signal,
     });
-    expect(observedSignal).toBe(ac.signal);
+    expect(abortedFromHandler).toBe(true);
   });
 
-  test('handler can observe abort and return early', async () => {
+  test('pre-aborted caller signal propagates immediately to ctx.signal', async () => {
     const cap = defineCapability({
-      name: 'signal__abort',
+      name: 'signal__pre_abort',
       description: 's',
       inputSchema: { x: Str() },
       handler: async (_input: unknown, ctx: CapabilityContext) => {
@@ -603,10 +606,10 @@ describe('dispatchCapability with audit', () => {
     expect(result.error?.message).toContain('aborted');
   });
 
-  test('signal omitted from CapabilityContext when not supplied', async () => {
-    let observed: AbortSignal | undefined = new AbortController().signal;
+  test('signal is always set (even without caller-supplied signal)', async () => {
+    let observed: AbortSignal | undefined;
     const cap = defineCapability({
-      name: 'signal__none',
+      name: 'signal__always',
       description: 's',
       inputSchema: { x: Str() },
       handler: async (_input: unknown, ctx: CapabilityContext) => {
@@ -623,7 +626,10 @@ describe('dispatchCapability with audit', () => {
       runtime,
       initiator: surfaceName,
     });
-    expect(observed).toBeUndefined();
+    // Always present so handlers can rely on it; the framework wires its
+    // own AbortController to support timeout enforcement uniformly.
+    expect(observed).toBeDefined();
+    expect(observed?.aborted).toBe(false);
   });
 
   test('auditRedact masks declared input keys before persisting', async () => {
@@ -901,6 +907,83 @@ describe('dispatchCapability rate limit', () => {
     const b = await dispatchCapability({ cap: cap.record, input: {}, identity: SYSTEM, runtime, initiator: surfaceName });
     expect(a.ok).toBe(true);
     expect(b.ok).toBe(true);
+  });
+});
+
+// ── Timeout enforcement ─────────────────────────────────────────
+
+describe('dispatchCapability timeout', () => {
+  test('returns timeout error when handler exceeds budget', async () => {
+    const cap = defineCapability({
+      name: 'slow__call',
+      description: 'slow',
+      inputSchema: { x: Str() },
+      timeout: 30,
+      handler: async () => {
+        await new Promise((r) => setTimeout(r, 200));
+        return { ok: true };
+      },
+    });
+    await bootRegistry([cap]);
+    const result = await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error?.kind).toBe('timeout');
+    expect(result.error?.message).toContain('30ms');
+  });
+
+  test('signal flips to aborted when timeout fires', async () => {
+    let observedAbortedReason: unknown = null;
+    const cap = defineCapability({
+      name: 'cooperative__call',
+      description: 'co-op',
+      inputSchema: { x: Str() },
+      timeout: 20,
+      handler: async (_input: unknown, ctx: CapabilityContext) => {
+        await new Promise((r) => setTimeout(r, 80));
+        observedAbortedReason = ctx.signal?.aborted
+          ? (ctx.signal as AbortSignal & { reason?: unknown }).reason
+          : null;
+        return { done: true };
+      },
+    });
+    await bootRegistry([cap]);
+    await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+    });
+    // Even though dispatchCapability returned with timeout, the handler
+    // continued running and observed the abort signal flip.
+    await new Promise((r) => setTimeout(r, 100));
+    expect(observedAbortedReason).toBe('timeout');
+  });
+
+  test('handler returning before timeout is unaffected', async () => {
+    const cap = defineCapability({
+      name: 'fast__call',
+      description: 'fast',
+      inputSchema: { x: Str() },
+      timeout: 200,
+      handler: async () => ({ done: true }),
+    });
+    await bootRegistry([cap]);
+    const result = await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.data).toEqual({ done: true });
   });
 });
 

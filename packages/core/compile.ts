@@ -577,6 +577,13 @@ export function compile(
         );
       }
     }
+    if (cap.timeout !== undefined) {
+      if (!Number.isFinite(cap.timeout) || cap.timeout <= 0) {
+        throw new Error(
+          `Capability '${cap.name}' timeout must be a positive number (milliseconds)`,
+        );
+      }
+    }
   }
 
   // Build wiring index (validates wiring targets)

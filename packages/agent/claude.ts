@@ -356,6 +356,8 @@ export async function dispatchCapability(
   config.onToolCall?.(ns, cap.name, config.input);
 
   let parsedInput: Record<string, unknown> = {};
+  // Hold the timeout's abort handle outside try/finally so the catch can clear it.
+  let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
   try {
     // Cross-cutting checks before any user code runs.
     checkCapabilityPolicy(cap, config.identity);
@@ -364,14 +366,53 @@ export async function dispatchCapability(
     parsedInput = parseCapabilityInput(cap, config.input);
     const internalDispatch: InternalDispatch = (entity, operation, opInput, opIdentity) =>
       runtime.dispatch(initiator, entity, operation, opInput, opIdentity);
+
+    // Build the signal handed to the handler. If the caller supplied one,
+    // link it so caller-driven aborts still propagate. If a timeout is
+    // configured, stack an internal timer that aborts after N ms.
+    const ac = new AbortController();
+    if (config.signal) {
+      if (config.signal.aborted) {
+        ac.abort((config.signal as AbortSignal & { reason?: unknown }).reason);
+      } else {
+        config.signal.addEventListener(
+          'abort',
+          () => ac.abort((config.signal as AbortSignal & { reason?: unknown }).reason),
+          { once: true },
+        );
+      }
+    }
+
     const ctx: CapabilityContext = {
       identity: config.identity,
       dispatch: internalDispatch,
       correlationId,
       ...(config.registry ? { registry: config.registry } : {}),
-      ...(config.signal ? { signal: config.signal } : {}),
+      // Always set signal — handlers expecting cancellation can rely on it
+      // even when the caller didn't provide one (e.g. when only a timeout
+      // is configured, or for symmetry with future timeout-injected paths).
+      signal: ac.signal,
     };
-    const result = await cap.handler(parsedInput, ctx);
+
+    const handlerPromise = cap.handler(parsedInput, ctx);
+    let result: unknown;
+    if (cap.timeout && cap.timeout > 0) {
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutTimer = setTimeout(() => {
+          ac.abort('timeout');
+          reject(
+            Object.assign(
+              new Error(`Capability '${cap.name}' timed out after ${cap.timeout}ms`),
+              { kind: 'timeout', retryable: true },
+            ),
+          );
+        }, cap.timeout);
+      });
+      result = await Promise.race([handlerPromise, timeoutPromise]);
+    } else {
+      result = await handlerPromise;
+    }
+    if (timeoutTimer) clearTimeout(timeoutTimer);
     const response: AgentResponse = { ok: true, data: result };
     config.onToolResult?.(ns, cap.name, response);
     await writeCapabilityAudit(cap, {
@@ -385,9 +426,11 @@ export async function dispatchCapability(
     });
     return response;
   } catch (err) {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
     const message = err instanceof Error ? err.message : String(err);
-    // Threaded errors (auth-error, rate-limit-exceeded) attach a `kind` we
-    // can surface; everything else is a generic capability-error.
+    // Threaded errors (auth-error, rate-limit-exceeded, validation-error,
+    // timeout) attach a `kind` we can surface; everything else is a generic
+    // capability-error.
     const errKind =
       err && typeof err === 'object' && 'kind' in err
         ? String((err as { kind: unknown }).kind)

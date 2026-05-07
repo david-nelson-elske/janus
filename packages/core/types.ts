@@ -470,6 +470,14 @@ export interface CapabilityConfig<TInput = unknown, TOutput = unknown> {
    * and PII the handler accepts or returns. Has no effect when audit is unset.
    */
   readonly auditRedact?: readonly string[];
+  /**
+   * Maximum dispatch duration in milliseconds. When exceeded, ctx.signal
+   * fires AND the dispatch resolves with a 'timeout' error response.
+   * Well-behaved handlers should observe ctx.signal.aborted and exit;
+   * misbehaved handlers continue running in the background but no longer
+   * block the caller. Omit to disable.
+   */
+  readonly timeout?: number;
   /** Tags for grouping in the agent's system prompt and for filter allowlists. */
   readonly tags?: readonly string[];
 }
@@ -486,6 +494,7 @@ export interface CapabilityRecord {
   readonly audit?: AuditLevel | AuditConfig;
   readonly observe?: boolean;
   readonly auditRedact?: readonly string[];
+  readonly timeout?: number;
   readonly tags?: readonly string[];
 }
 

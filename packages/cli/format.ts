@@ -141,6 +141,7 @@ export function formatCapability(cap: CapabilityRecord): string {
   if (cap.auditRedact?.length) settings.push(`redacts: ${cap.auditRedact.join(', ')}`);
   if (cap.policy) settings.push('policy enforced');
   if (cap.rateLimit) settings.push(`rate-limited (${cap.rateLimit.max}/${cap.rateLimit.window}ms)`);
+  if (cap.timeout) settings.push(`timeout ${cap.timeout}ms`);
   if (settings.length) {
     lines.push('', `Settings: ${settings.join(' · ')}`);
   }

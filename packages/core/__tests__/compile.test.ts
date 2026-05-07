@@ -315,6 +315,18 @@ describe('compile() validation', () => {
     });
     expect(() => compile([cap])).toThrow('rateLimit.window must be a positive number');
   });
+
+  test('capability with non-positive timeout throws', () => {
+    seedHandlers();
+    const cap = defineCapability({
+      name: 'bad__timeout',
+      description: 'b',
+      inputSchema: { x: Str() },
+      timeout: 0,
+      handler: async () => null,
+    });
+    expect(() => compile([cap])).toThrow('timeout must be a positive number');
+  });
 });
 
 // ── Query helpers ───────────────────────────────────────────────
