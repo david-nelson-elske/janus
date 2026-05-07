@@ -12,6 +12,7 @@ import type { CompileResult, Identity } from '@janus/core';
 import { SYSTEM } from '@janus/core';
 import { discoverCapabilities, dispatchCapability } from '@janus/agent';
 import type { DispatchRuntime } from '@janus/pipeline';
+import { createRateLimitStore } from '@janus/pipeline';
 import { semanticToZodShape } from './semantic-to-zod';
 
 export interface BuildMcpServerConfig {
@@ -65,6 +66,10 @@ export function buildMcpServer(config: BuildMcpServerConfig): McpServer {
     tags: config.capabilityTags,
   });
 
+  // Shared per-server rate-limit store. Same lifetime as the McpServer
+  // instance so reconnecting clients keep their existing counters.
+  const rateLimitStore = createRateLimitStore();
+
   for (const cap of capabilities) {
     const inputShape = semanticToZodShape(cap.inputSchema);
     const outputShape = cap.outputSchema ? semanticToZodShape(cap.outputSchema) : undefined;
@@ -90,6 +95,7 @@ export function buildMcpServer(config: BuildMcpServerConfig): McpServer {
           // fires when the client cancels the request. Forward it so
           // long-running capability handlers can bail out cooperatively.
           signal: extra.signal,
+          rateLimitStore,
         });
 
         if (!response.ok) {

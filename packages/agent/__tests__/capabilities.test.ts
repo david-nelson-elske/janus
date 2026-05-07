@@ -17,6 +17,7 @@ import {
   registerHandlers,
   createDispatchRuntime,
   createBroker,
+  createRateLimitStore,
   frameworkEntities,
   frameworkParticipations,
 } from '@janus/pipeline';
@@ -30,7 +31,7 @@ import {
   createAgentLoop,
   dispatchCapability,
 } from '..';
-import { SYSTEM } from '@janus/core';
+import { ANONYMOUS, SYSTEM } from '@janus/core';
 
 const noopHandler = async (_input: unknown, _ctx: CapabilityContext) => ({ ok: true });
 
@@ -675,6 +676,182 @@ describe('dispatchCapability with audit', () => {
     const row = data.records[0];
     expect(row.ok).toBe(false);
     expect(row.error).toBe('nope');
+  });
+});
+
+// ── Policy enforcement ─────────────────────────────────────────
+
+describe('dispatchCapability policy', () => {
+  test('allows when no policy configured', async () => {
+    const cap = defineCapability({
+      name: 'open__call',
+      description: 'no policy',
+      inputSchema: { x: Str() },
+      handler: async () => ({ ok: true }),
+    });
+    await bootRegistry([cap]);
+    const result = await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: { id: 'u', roles: ['anyone'] },
+      runtime,
+      initiator: surfaceName,
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  test('allows when caller has matching role', async () => {
+    const cap = defineCapability({
+      name: 'admin__call',
+      description: 'admin only',
+      inputSchema: { x: Str() },
+      policy: { rules: [{ role: 'admin', operations: '*' }] },
+      handler: async () => ({ ok: true }),
+    });
+    await bootRegistry([cap]);
+    const result = await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: { id: 'a', roles: ['admin', 'user'] },
+      runtime,
+      initiator: surfaceName,
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  test('denies when caller lacks any matching role', async () => {
+    const cap = defineCapability({
+      name: 'admin__only',
+      description: 'admin only',
+      inputSchema: { x: Str() },
+      policy: { rules: [{ role: 'admin', operations: '*' }] },
+      handler: async () => ({ ok: true }),
+    });
+    await bootRegistry([cap]);
+    const result = await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: { id: 'u', roles: ['user'] },
+      runtime,
+      initiator: surfaceName,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error?.kind).toBe('auth-error');
+    expect(result.error?.message).toContain('cannot call');
+  });
+
+  test('denies anonymous callers by default', async () => {
+    const cap = defineCapability({
+      name: 'auth__call',
+      description: 'requires auth',
+      inputSchema: { x: Str() },
+      policy: { rules: [{ role: 'user', operations: '*' }] },
+      handler: async () => ({ ok: true }),
+    });
+    await bootRegistry([cap]);
+    const result = await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: ANONYMOUS,
+      runtime,
+      initiator: surfaceName,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error?.kind).toBe('auth-error');
+    expect(result.error?.message).toContain('Anonymous');
+  });
+
+  test('allows anonymous when anonymousRead is true', async () => {
+    const cap = defineCapability({
+      name: 'public__call',
+      description: 'public',
+      inputSchema: { x: Str() },
+      policy: { rules: [{ role: 'user', operations: '*' }], anonymousRead: true },
+      handler: async () => ({ ok: true }),
+    });
+    await bootRegistry([cap]);
+    const result = await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: ANONYMOUS,
+      runtime,
+      initiator: surfaceName,
+    });
+    expect(result.ok).toBe(true);
+  });
+});
+
+// ── Rate limit enforcement ─────────────────────────────────────
+
+describe('dispatchCapability rate limit', () => {
+  test('allows up to max calls within window', async () => {
+    const cap = defineCapability({
+      name: 'limited__call',
+      description: 'limited',
+      inputSchema: { x: Str() },
+      rateLimit: { max: 2, window: 1000 },
+      handler: async () => ({ ok: true }),
+    });
+    await bootRegistry([cap]);
+    const store = createRateLimitStore();
+    const id: typeof SYSTEM = { id: 'caller-1', roles: ['user'] };
+
+    const a = await dispatchCapability({ cap: cap.record, input: {}, identity: id, runtime, initiator: surfaceName, rateLimitStore: store });
+    const b = await dispatchCapability({ cap: cap.record, input: {}, identity: id, runtime, initiator: surfaceName, rateLimitStore: store });
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(true);
+  });
+
+  test('blocks when limit exceeded', async () => {
+    const cap = defineCapability({
+      name: 'tight__call',
+      description: 'tight',
+      inputSchema: { x: Str() },
+      rateLimit: { max: 1, window: 1000 },
+      handler: async () => ({ ok: true }),
+    });
+    await bootRegistry([cap]);
+    const store = createRateLimitStore();
+    const id: typeof SYSTEM = { id: 'caller-1', roles: ['user'] };
+
+    const a = await dispatchCapability({ cap: cap.record, input: {}, identity: id, runtime, initiator: surfaceName, rateLimitStore: store });
+    const b = await dispatchCapability({ cap: cap.record, input: {}, identity: id, runtime, initiator: surfaceName, rateLimitStore: store });
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(false);
+    expect(b.error?.kind).toBe('rate-limit-exceeded');
+  });
+
+  test('different identities have independent counters', async () => {
+    const cap = defineCapability({
+      name: 'per_user__call',
+      description: 'per-user',
+      inputSchema: { x: Str() },
+      rateLimit: { max: 1, window: 1000 },
+      handler: async () => ({ ok: true }),
+    });
+    await bootRegistry([cap]);
+    const store = createRateLimitStore();
+
+    const a = await dispatchCapability({ cap: cap.record, input: {}, identity: { id: 'u1', roles: ['user'] }, runtime, initiator: surfaceName, rateLimitStore: store });
+    const b = await dispatchCapability({ cap: cap.record, input: {}, identity: { id: 'u2', roles: ['user'] }, runtime, initiator: surfaceName, rateLimitStore: store });
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(true);
+  });
+
+  test('skips rate-limit when no store provided', async () => {
+    const cap = defineCapability({
+      name: 'unbounded__call',
+      description: 'no store',
+      inputSchema: { x: Str() },
+      rateLimit: { max: 1, window: 1000 },
+      handler: async () => ({ ok: true }),
+    });
+    await bootRegistry([cap]);
+
+    const a = await dispatchCapability({ cap: cap.record, input: {}, identity: SYSTEM, runtime, initiator: surfaceName });
+    const b = await dispatchCapability({ cap: cap.record, input: {}, identity: SYSTEM, runtime, initiator: surfaceName });
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(true);
   });
 });
 

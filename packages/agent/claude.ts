@@ -7,10 +7,11 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import type { CapabilityContext, CapabilityRecord, CompileResult, Identity, InternalDispatch, SchemaField } from '@janus/core';
-import { SYSTEM } from '@janus/core';
+import type { CapabilityContext, CapabilityRecord, CompileResult, Identity, InternalDispatch, PolicyConfig, SchemaField } from '@janus/core';
+import { ANONYMOUS, SYSTEM } from '@janus/core';
 import { isSemanticField } from '@janus/vocabulary';
-import type { DispatchRuntime } from '@janus/pipeline';
+import type { DispatchRuntime, RateLimitStore } from '@janus/pipeline';
+import { createRateLimitStore } from '@janus/pipeline';
 import { discoverCapabilities, discoverTools } from './context';
 import type { ToolDescriptor, AgentResponse } from './types';
 
@@ -242,6 +243,62 @@ function capabilityNamespace(name: string): string {
   return idx === -1 ? name : name.slice(0, idx);
 }
 
+/**
+ * Enforce a capability's policy by checking caller's roles against rules.
+ * Throws auth-error on deny. Capabilities have no per-operation distinction
+ * so a rule's `operations` field is treated as "applies whenever role matches".
+ */
+function checkCapabilityPolicy(cap: CapabilityRecord, identity: Identity): void {
+  const policy: PolicyConfig | undefined = cap.policy;
+  if (!policy || !policy.rules || policy.rules.length === 0) return;
+
+  if (identity.id === ANONYMOUS.id) {
+    if (policy.anonymousRead) {
+      // For capabilities anonymousRead is symmetric — there's no read/write
+      // distinction. Treat the flag as "anonymous calls are allowed."
+      return;
+    }
+    throw Object.assign(
+      new Error(`Anonymous access denied for capability '${cap.name}'`),
+      { kind: 'auth-error', retryable: false },
+    );
+  }
+
+  const matched = policy.rules.some((rule) => identity.roles.includes(rule.role));
+  if (!matched) {
+    throw Object.assign(
+      new Error(
+        `Access denied: ${identity.id} (roles: ${identity.roles.join(',')}) cannot call capability '${cap.name}'`,
+      ),
+      { kind: 'auth-error', retryable: false },
+    );
+  }
+}
+
+/** Enforce a capability's rate limit. Throws rate-limit-exceeded on overflow. */
+function checkCapabilityRateLimit(
+  cap: CapabilityRecord,
+  identity: Identity,
+  store: RateLimitStore | undefined,
+): void {
+  if (!cap.rateLimit || !store) return;
+  const key = `cap:${cap.name}:${identity.id}`;
+  const result = store.check(key, cap.rateLimit.max, cap.rateLimit.window);
+  if (result.blocked) {
+    throw Object.assign(
+      new Error(
+        `Rate limit exceeded for ${identity.id} on capability '${cap.name}': ` +
+          `${result.count}/${cap.rateLimit.max} in ${cap.rateLimit.window}ms`,
+      ),
+      {
+        kind: 'rate-limit-exceeded' as const,
+        retryable: true,
+        retryAfterMs: result.retryAfterMs,
+      },
+    );
+  }
+}
+
 // ── Capability dispatch helper ──────────────────────────────────
 
 export interface DispatchCapabilityConfig {
@@ -258,6 +315,14 @@ export interface DispatchCapabilityConfig {
    * abort its own work; the framework does not enforce timeouts.
    */
   readonly signal?: AbortSignal;
+  /**
+   * Optional rate-limit store. When set, capabilities declaring a
+   * rateLimit have their counter checked here. createAgentLoop and
+   * buildMcpServer construct one internally so all dispatches in a
+   * single process share state. Standalone callers can pass their own
+   * (e.g. for tests, or to share with the entity-side rate limiter).
+   */
+  readonly rateLimitStore?: RateLimitStore;
 }
 
 /**
@@ -279,6 +344,10 @@ export async function dispatchCapability(
 
   let parsedInput: Record<string, unknown> = {};
   try {
+    // Cross-cutting checks before any user code runs.
+    checkCapabilityPolicy(cap, config.identity);
+    checkCapabilityRateLimit(cap, config.identity, config.rateLimitStore);
+
     parsedInput = parseCapabilityInput(cap, config.input);
     const internalDispatch: InternalDispatch = (entity, operation, opInput, opIdentity) =>
       runtime.dispatch(initiator, entity, operation, opInput, opIdentity);
@@ -303,9 +372,15 @@ export async function dispatchCapability(
     return response;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    // Threaded errors (auth-error, rate-limit-exceeded) attach a `kind` we
+    // can surface; everything else is a generic capability-error.
+    const errKind =
+      err && typeof err === 'object' && 'kind' in err
+        ? String((err as { kind: unknown }).kind)
+        : 'capability-error';
     const response: AgentResponse = {
       ok: false,
-      error: { kind: 'capability-error', message },
+      error: { kind: errKind, message },
     };
     config.onToolResult?.(ns, cap.name, response);
     await writeCapabilityAudit(cap, {
@@ -590,6 +665,10 @@ export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
     ...(config.extraTools ?? []),
   ];
   const extraToolHandlers = config.extraToolHandlers ?? {};
+
+  // Shared per-loop rate-limit store so capabilities declaring rateLimit
+  // are enforced consistently across every turn of every chat in this loop.
+  const capabilityRateLimitStore = createRateLimitStore();
   const systemPrompt = config.systemPrompt ?? buildSystemPrompt(discoveredTools, discoveredCapabilities);
   // Wrap the system prompt in an ephemeral cache block. Identical system
   // prompts across calls within the cache TTL (~5 min) are billed at ~10% of
@@ -618,6 +697,7 @@ export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
         initiator,
         onToolCall: config.onToolCall,
         onToolResult: config.onToolResult,
+        rateLimitStore: capabilityRateLimitStore,
       });
       return {
         type: 'tool_result',
