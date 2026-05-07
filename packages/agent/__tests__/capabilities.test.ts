@@ -501,6 +501,53 @@ describe('dispatchCapability with audit', () => {
     expect(received).toEqual({ keep: 'yes' });
   });
 
+  test('registry propagates to CapabilityContext when supplied', async () => {
+    let observed: unknown = null;
+    const cap = defineCapability({
+      name: 'registry__check',
+      description: 'r',
+      inputSchema: { x: Str() },
+      handler: async (_input: unknown, ctx: CapabilityContext) => {
+        observed = ctx.registry;
+        return null;
+      },
+    });
+    await bootRegistry([cap]);
+
+    await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+      registry,
+    });
+    expect(observed).toBe(registry);
+  });
+
+  test('registry omitted from context when not supplied', async () => {
+    let observed: unknown = registry;
+    const cap = defineCapability({
+      name: 'registry__none',
+      description: 'r',
+      inputSchema: { x: Str() },
+      handler: async (_input: unknown, ctx: CapabilityContext) => {
+        observed = ctx.registry;
+        return null;
+      },
+    });
+    await bootRegistry([cap]);
+
+    await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+    });
+    expect(observed).toBeUndefined();
+  });
+
   test('AbortSignal propagates to handler via CapabilityContext.signal', async () => {
     let observedSignal: AbortSignal | undefined;
     const cap = defineCapability({

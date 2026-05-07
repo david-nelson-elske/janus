@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { define, participate, compile, seedHandlers, clearRegistry } from '..';
+import { define, participate, compile, defineCapability, seedHandlers, clearRegistry } from '..';
 import type { InitiatorConfig, ParticipationRecord } from '..';
 import { Str, Int, Markdown, DateTime, Lifecycle, Relation, Persistent, Singleton, Derived, Volatile, Enum, QrCode } from '@janus/vocabulary';
 
@@ -246,6 +246,74 @@ describe('compile() validation', () => {
     });
     const noteP = participate(note, {});
     expect(() => compile([note, noteP])).toThrow("references unknown entity 'nonexistent'");
+  });
+
+  // ── Capability validation ─────────────────────────────────────
+
+  test('duplicate capability names throw', () => {
+    seedHandlers();
+    const a = defineCapability({
+      name: 'drive__search',
+      description: 'a',
+      inputSchema: { q: Str() },
+      handler: async () => null,
+    });
+    const b = defineCapability({
+      name: 'drive__search',
+      description: 'b',
+      inputSchema: { q: Str() },
+      handler: async () => null,
+    });
+    expect(() => compile([a, b])).toThrow('Duplicate capability name');
+  });
+
+  test('capability with empty policy role throws at compile', () => {
+    seedHandlers();
+    const cap = defineCapability({
+      name: 'bad__policy',
+      description: 'b',
+      inputSchema: { x: Str() },
+      policy: { rules: [{ role: '', operations: '*' }] },
+      handler: async () => null,
+    });
+    expect(() => compile([cap])).toThrow('role must be a non-empty string');
+  });
+
+  test('capability with invalid policy.operations throws', () => {
+    seedHandlers();
+    const cap = defineCapability({
+      name: 'bad__ops',
+      description: 'b',
+      inputSchema: { x: Str() },
+      // @ts-expect-error testing runtime guard
+      policy: { rules: [{ role: 'admin', operations: 'admin' }] },
+      handler: async () => null,
+    });
+    expect(() => compile([cap])).toThrow("operations must be '*' or an array");
+  });
+
+  test('capability with non-positive rateLimit.max throws', () => {
+    seedHandlers();
+    const cap = defineCapability({
+      name: 'bad__rate',
+      description: 'b',
+      inputSchema: { x: Str() },
+      rateLimit: { max: 0, window: 1000 },
+      handler: async () => null,
+    });
+    expect(() => compile([cap])).toThrow('rateLimit.max must be a positive number');
+  });
+
+  test('capability with non-positive rateLimit.window throws', () => {
+    seedHandlers();
+    const cap = defineCapability({
+      name: 'bad__win',
+      description: 'b',
+      inputSchema: { x: Str() },
+      rateLimit: { max: 10, window: -5 },
+      handler: async () => null,
+    });
+    expect(() => compile([cap])).toThrow('rateLimit.window must be a positive number');
   });
 });
 

@@ -425,6 +425,12 @@ export interface CapabilityContext {
   readonly identity: Identity;
   /** Internal dispatch for nested entity-graph calls. May be undefined in tests. */
   readonly dispatch?: InternalDispatch;
+  /**
+   * Compiled registry — gives capabilities access to entity metadata,
+   * other capabilities, and binding info without round-tripping through
+   * dispatch. Optional so tests can construct a context standalone.
+   */
+  readonly registry?: CompileResult;
   /** Cooperative cancellation. Best-effort; agent loop currently does not enforce timeouts. */
   readonly signal?: AbortSignal;
   /** Correlation id propagated from caller for log/audit chaining. */

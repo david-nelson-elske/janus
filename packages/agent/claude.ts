@@ -323,6 +323,13 @@ export interface DispatchCapabilityConfig {
    * (e.g. for tests, or to share with the entity-side rate limiter).
    */
   readonly rateLimitStore?: RateLimitStore;
+  /**
+   * Compiled registry — propagated to CapabilityContext.registry so the
+   * handler can introspect entity metadata or other capabilities.
+   * createAgentLoop and buildMcpServer pass their registry through
+   * automatically.
+   */
+  readonly registry?: CompileResult;
 }
 
 /**
@@ -355,6 +362,7 @@ export async function dispatchCapability(
       identity: config.identity,
       dispatch: internalDispatch,
       correlationId,
+      ...(config.registry ? { registry: config.registry } : {}),
       ...(config.signal ? { signal: config.signal } : {}),
     };
     const result = await cap.handler(parsedInput, ctx);
@@ -698,6 +706,7 @@ export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
         onToolCall: config.onToolCall,
         onToolResult: config.onToolResult,
         rateLimitStore: capabilityRateLimitStore,
+        registry: config.registry,
       });
       return {
         type: 'tool_result',

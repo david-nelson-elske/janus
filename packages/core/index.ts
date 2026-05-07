@@ -182,3 +182,8 @@ export {
   extractResultData,
   isReadPage,
 } from './types';
+
+// Re-export from @janus/vocabulary that consumers configuring capabilities
+// reach for most often. Keeps a one-import path for `audit: AuditFull`.
+export { AuditFull, AuditLight, AuditNone } from '@janus/vocabulary';
+export type { AuditLevel, AuditLevelKind } from '@janus/vocabulary';

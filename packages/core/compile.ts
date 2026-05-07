@@ -545,6 +545,40 @@ export function compile(
     }
   }
 
+  // Validate capability concern configs. Catches typos and impossible
+  // values at compile time so users discover mistakes before dispatch.
+  for (const cap of capabilities.values()) {
+    if (cap.policy) {
+      if (!Array.isArray(cap.policy.rules)) {
+        throw new Error(`Capability '${cap.name}' policy.rules must be an array`);
+      }
+      for (const [i, rule] of cap.policy.rules.entries()) {
+        if (!rule.role || typeof rule.role !== 'string') {
+          throw new Error(
+            `Capability '${cap.name}' policy.rules[${i}].role must be a non-empty string`,
+          );
+        }
+        if (rule.operations !== '*' && !Array.isArray(rule.operations)) {
+          throw new Error(
+            `Capability '${cap.name}' policy.rules[${i}].operations must be '*' or an array`,
+          );
+        }
+      }
+    }
+    if (cap.rateLimit) {
+      if (!Number.isFinite(cap.rateLimit.max) || cap.rateLimit.max <= 0) {
+        throw new Error(
+          `Capability '${cap.name}' rateLimit.max must be a positive number`,
+        );
+      }
+      if (!Number.isFinite(cap.rateLimit.window) || cap.rateLimit.window <= 0) {
+        throw new Error(
+          `Capability '${cap.name}' rateLimit.window must be a positive number (milliseconds)`,
+        );
+      }
+    }
+  }
+
   // Build wiring index (validates wiring targets)
   const wiring = buildWiringIndex(graphNodes);
 

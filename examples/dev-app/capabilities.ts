@@ -56,26 +56,37 @@ export const webFetch = defineCapability({
   },
 });
 
-/** Reports registry metadata via ctx.dispatch. Demonstrates capability → entity calls. */
+/** Reports registry metadata. Demonstrates ctx.registry + ctx.dispatch use. */
 export const frameworkDescribe = defineCapability({
   name: 'framework__describe',
-  description: 'Summarize the compiled registry (entity count, capability count)',
+  description: 'Summarize the compiled registry (entity count, capability count, sample task data)',
   inputSchema: {},
   outputSchema: {
     entityCount: Int(),
     capabilityCount: Int(),
-    entities: Json(),
+    capabilityNames: Json(),
+    entityNames: Json(),
+    sampleTasks: Json(),
   },
   tags: ['system', 'meta'],
   handler: async (_input, ctx) => {
-    // Read a representative entity to prove ctx.dispatch works.
+    const reg = ctx.registry;
+    const entityNames = reg ? Array.from(reg.graphNodes.keys()).filter(
+      (n) => reg.entity(n)?.origin !== 'framework',
+    ).sort() : [];
+    const capabilityNames = reg ? Array.from(reg.capabilities.keys()).sort() : [];
+
+    // Prove ctx.dispatch works by pulling a sample of tasks.
     const taskRead = ctx.dispatch
-      ? await ctx.dispatch('task', 'read', {}, ctx.identity ?? SYSTEM)
+      ? await ctx.dispatch('task', 'read', { limit: 3 }, ctx.identity ?? SYSTEM)
       : null;
+
     return {
-      entityCount: 0, // populated by caller code if it wants exact numbers; demo intent
-      capabilityCount: 3,
-      entities: taskRead?.ok ? { task: taskRead.data } : null,
+      entityCount: entityNames.length,
+      capabilityCount: capabilityNames.length,
+      capabilityNames,
+      entityNames,
+      sampleTasks: taskRead?.ok ? taskRead.data : null,
     };
   },
 });

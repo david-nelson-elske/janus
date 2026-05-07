@@ -96,6 +96,7 @@ export function buildMcpServer(config: BuildMcpServerConfig): McpServer {
           // long-running capability handlers can bail out cooperatively.
           signal: extra.signal,
           rateLimitStore,
+          registry: config.registry,
         });
 
         if (!response.ok) {
