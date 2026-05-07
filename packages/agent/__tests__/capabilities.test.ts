@@ -499,6 +499,82 @@ describe('dispatchCapability with audit', () => {
     expect(received).toEqual({ keep: 'yes' });
   });
 
+  test('AbortSignal propagates to handler via CapabilityContext.signal', async () => {
+    let observedSignal: AbortSignal | undefined;
+    const cap = defineCapability({
+      name: 'signal__check',
+      description: 's',
+      inputSchema: { x: Str() },
+      handler: async (_input: unknown, ctx: CapabilityContext) => {
+        observedSignal = ctx.signal;
+        return null;
+      },
+    });
+    await bootRegistry([cap]);
+
+    const ac = new AbortController();
+    await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+      signal: ac.signal,
+    });
+    expect(observedSignal).toBe(ac.signal);
+  });
+
+  test('handler can observe abort and return early', async () => {
+    const cap = defineCapability({
+      name: 'signal__abort',
+      description: 's',
+      inputSchema: { x: Str() },
+      handler: async (_input: unknown, ctx: CapabilityContext) => {
+        if (ctx.signal?.aborted) {
+          throw new Error(`aborted: ${(ctx.signal as AbortSignal & { reason?: unknown }).reason ?? 'unknown'}`);
+        }
+        return { ok: true };
+      },
+    });
+    await bootRegistry([cap]);
+
+    const ac = new AbortController();
+    ac.abort('test-cancel');
+    const result = await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+      signal: ac.signal,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toContain('aborted');
+  });
+
+  test('signal omitted from CapabilityContext when not supplied', async () => {
+    let observed: AbortSignal | undefined = new AbortController().signal;
+    const cap = defineCapability({
+      name: 'signal__none',
+      description: 's',
+      inputSchema: { x: Str() },
+      handler: async (_input: unknown, ctx: CapabilityContext) => {
+        observed = ctx.signal;
+        return null;
+      },
+    });
+    await bootRegistry([cap]);
+
+    await dispatchCapability({
+      cap: cap.record,
+      input: {},
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+    });
+    expect(observed).toBeUndefined();
+  });
+
   test('auditRedact masks declared input keys before persisting', async () => {
     const cap = defineCapability({
       name: 'redact__input',

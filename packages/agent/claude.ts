@@ -252,6 +252,12 @@ export interface DispatchCapabilityConfig {
   readonly initiator: string;
   readonly onToolCall?: (namespace: string, toolName: string, input: unknown) => void;
   readonly onToolResult?: (namespace: string, toolName: string, result: AgentResponse) => void;
+  /**
+   * Cooperative cancellation signal. Propagated to the capability handler
+   * via CapabilityContext.signal. The handler must check the signal and
+   * abort its own work; the framework does not enforce timeouts.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -280,6 +286,7 @@ export async function dispatchCapability(
       identity: config.identity,
       dispatch: internalDispatch,
       correlationId,
+      ...(config.signal ? { signal: config.signal } : {}),
     };
     const result = await cap.handler(parsedInput, ctx);
     const response: AgentResponse = { ok: true, data: result };

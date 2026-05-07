@@ -77,7 +77,7 @@ export function buildMcpServer(config: BuildMcpServerConfig): McpServer {
         inputSchema: inputShape,
         ...(outputShape ? { outputSchema: outputShape } : {}),
       },
-      async (args) => {
+      async (args, extra) => {
         const response = await dispatchCapability({
           cap,
           input: args,
@@ -86,6 +86,10 @@ export function buildMcpServer(config: BuildMcpServerConfig): McpServer {
           initiator,
           onToolCall: config.onToolCall,
           onToolResult: config.onToolResult,
+          // MCP SDK supplies an AbortSignal on every tool callback that
+          // fires when the client cancels the request. Forward it so
+          // long-running capability handlers can bail out cooperatively.
+          signal: extra.signal,
         });
 
         if (!response.ok) {
