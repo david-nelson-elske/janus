@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@janus/agent": "workspace:*",
+    "@janus/agent-mcp": "workspace:*",
     "@janus/core": "workspace:*",
     "@janus/client": "workspace:*",
     "@janus/http": "workspace:*",

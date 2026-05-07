@@ -16,6 +16,7 @@ import { allDefinitions, wireTaskSummaryStore } from './entities';
 import { allParticipations } from './participation';
 import { allSubscriptions } from './subscriptions';
 import { allBindings } from './bindings';
+import { allCapabilities } from './capabilities';
 
 export interface BootConfig {
   readonly dbPath?: string;
@@ -43,13 +44,14 @@ export async function boot(configOrDbPath?: string | BootConfig): Promise<DemoAp
   // 1. Register real handler implementations
   registerHandlers();
 
-  // 2. Compile all declarations (consumer + framework entities + subscriptions)
+  // 2. Compile all declarations (consumer + framework entities + subscriptions + capabilities)
   const registry = compile(
     [
       ...allDefinitions,
       ...allParticipations,
       ...allSubscriptions,
       ...allBindings,
+      ...allCapabilities,
       ...frameworkEntities,
       ...frameworkParticipations,
     ],

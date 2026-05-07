@@ -142,6 +142,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@janus/agent": "workspace:*",
+        "@janus/agent-mcp": "workspace:*",
         "@janus/client": "workspace:*",
         "@janus/core": "workspace:*",
         "@janus/http": "workspace:*",
