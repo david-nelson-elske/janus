@@ -10,7 +10,7 @@ export { default as Anthropic } from '@anthropic-ai/sdk';
 export { agentSurface } from './surface';
 export { deriveInteractionLevels, discoverTools, discoverCapabilities, discoverNavigationTools, buildAgentContext } from './context';
 export type { BuildAgentContextConfig, DiscoverCapabilitiesOptions } from './context';
-export { createAgentLoop, toClaudeTools, toClaudeToolsFromCapabilities, parseToolName, dispatchCapability } from './claude';
+export { createAgentLoop, toClaudeTools, toClaudeToolsFromCapabilities, parseToolName, dispatchCapability, buildSystemPrompt } from './claude';
 export type { AgentLoopConfig, AgentLoop, ChatStreamCallbacks, DispatchCapabilityConfig } from './claude';
 export { createOpenAIAgentLoop, toOpenAITools } from './openai-chat';
 export type { OpenAIAgentLoopConfig, OpenAIAgentLoop } from './openai-chat';

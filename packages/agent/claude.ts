@@ -487,9 +487,13 @@ export interface AgentLoop {
 
 /**
  * Build a system prompt from discovered tools.
- * Gives the model entity-graph awareness without hardcoding entity names.
+ * Gives the model entity-graph awareness without hardcoding entity names,
+ * plus a flat list of available capabilities grouped by namespace.
  */
-function buildSystemPrompt(tools: readonly ToolDescriptor[]): string {
+export function buildSystemPrompt(
+  tools: readonly ToolDescriptor[],
+  capabilities: readonly CapabilityRecord[] = [],
+): string {
   const entities = new Map<string, { description?: string; operations: string[]; transitions: string[] }>();
 
   for (const t of tools) {
@@ -509,17 +513,43 @@ function buildSystemPrompt(tools: readonly ToolDescriptor[]): string {
   const lines = [
     'You are an assistant with access to an entity graph. You can read, create, update, and delete records using the tools provided.',
     '',
-    'Available entities:',
   ];
 
-  for (const [name, info] of entities) {
-    let line = `- ${name}: ${info.description ?? 'No description'}`;
-    line += ` [${info.operations.join(', ')}]`;
-    if (info.transitions.length) line += ` (transitions: ${info.transitions.join(', ')})`;
-    lines.push(line);
+  if (entities.size > 0) {
+    lines.push('Available entities:');
+    for (const [name, info] of entities) {
+      let line = `- ${name}: ${info.description ?? 'No description'}`;
+      line += ` [${info.operations.join(', ')}]`;
+      if (info.transitions.length) line += ` (transitions: ${info.transitions.join(', ')})`;
+      lines.push(line);
+    }
+    lines.push('');
   }
 
-  lines.push('');
+  if (capabilities.length > 0) {
+    // Group capabilities by namespace prefix so the model sees them
+    // organized rather than as a flat list of identical-shaped names.
+    const grouped = new Map<string, CapabilityRecord[]>();
+    for (const cap of capabilities) {
+      const ns = capabilityNamespace(cap.name);
+      let list = grouped.get(ns);
+      if (!list) {
+        list = [];
+        grouped.set(ns, list);
+      }
+      list.push(cap);
+    }
+
+    lines.push('Available capabilities (typed tool calls, not entity-shaped):');
+    for (const [ns, caps] of grouped) {
+      lines.push(`- ${ns}:`);
+      for (const cap of caps) {
+        lines.push(`  - ${cap.name} — ${cap.description}`);
+      }
+    }
+    lines.push('');
+  }
+
   lines.push('Use read operations to look up data before making changes. When listing records, use read without an id. When getting a specific record, pass the id field.');
 
   return lines.join('\n');
@@ -560,7 +590,7 @@ export function createAgentLoop(config: AgentLoopConfig): AgentLoop {
     ...(config.extraTools ?? []),
   ];
   const extraToolHandlers = config.extraToolHandlers ?? {};
-  const systemPrompt = config.systemPrompt ?? buildSystemPrompt(discoveredTools);
+  const systemPrompt = config.systemPrompt ?? buildSystemPrompt(discoveredTools, discoveredCapabilities);
   // Wrap the system prompt in an ephemeral cache block. Identical system
   // prompts across calls within the cache TTL (~5 min) are billed at ~10% of
   // the input rate via cache_read_input_tokens. Stu's system prompt is ~10KB

@@ -24,6 +24,7 @@ import type { DispatchRuntime } from '@janus/pipeline';
 import { createMemoryAdapter, createEntityStore } from '@janus/store';
 import {
   agentSurface,
+  buildSystemPrompt,
   discoverCapabilities,
   toClaudeToolsFromCapabilities,
   createAgentLoop,
@@ -674,5 +675,39 @@ describe('dispatchCapability with audit', () => {
     const row = data.records[0];
     expect(row.ok).toBe(false);
     expect(row.error).toBe('nope');
+  });
+});
+
+// ── System prompt with capabilities ────────────────────────────
+
+describe('buildSystemPrompt with capabilities', () => {
+  test('lists capabilities grouped by namespace', () => {
+    const caps = discoverCapabilities(registry);
+    const prompt = buildSystemPrompt([], caps);
+    expect(prompt).toContain('Available capabilities');
+    expect(prompt).toContain('drive:');
+    expect(prompt).toContain('drive__search');
+    expect(prompt).toContain('web:');
+    expect(prompt).toContain('web__fetch');
+    expect(prompt).toContain('mail:');
+    expect(prompt).toContain('mail__bodyfetch');
+  });
+
+  test('includes capability descriptions', () => {
+    const caps = discoverCapabilities(registry);
+    const prompt = buildSystemPrompt([], caps);
+    expect(prompt).toContain('Search Drive in a single account');
+    expect(prompt).toContain('Fetch a URL');
+  });
+
+  test('omits the capabilities section when none registered', () => {
+    const prompt = buildSystemPrompt([], []);
+    expect(prompt).not.toContain('Available capabilities');
+  });
+
+  test('omits the entities section when none discovered', () => {
+    const caps = discoverCapabilities(registry);
+    const prompt = buildSystemPrompt([], caps);
+    expect(prompt).not.toContain('Available entities');
   });
 });
