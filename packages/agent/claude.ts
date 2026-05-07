@@ -320,6 +320,17 @@ export async function dispatchCapability(
  * entity. Failures here are swallowed to logger output — auditing should
  * never break dispatch.
  */
+/** Mask top-level keys in an object before persisting to audit. */
+function redactKeys(value: unknown, keys: readonly string[]): unknown {
+  if (!keys.length || !value || typeof value !== 'object') return value;
+  const keySet = new Set(keys);
+  const masked: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    masked[k] = keySet.has(k) ? '[REDACTED]' : v;
+  }
+  return masked;
+}
+
 async function writeCapabilityAudit(
   cap: CapabilityRecord,
   args: {
@@ -339,6 +350,10 @@ async function writeCapabilityAudit(
   const level =
     'level' in cap.audit ? cap.audit.level : cap.audit;
   if (level && 'kind' in level && level.kind === 'none') return;
+
+  const redact = cap.auditRedact ?? [];
+  const inputForAudit = redactKeys(args.input, redact);
+  const outputForAudit = args.output !== undefined ? redactKeys(args.output, redact) : undefined;
   try {
     await args.runtime.dispatch(
       'system',
@@ -351,8 +366,8 @@ async function writeCapabilityAudit(
         ok: args.ok,
         correlation_id: args.correlationId,
         identity_id: args.identityId,
-        input: args.input,
-        output: args.output,
+        input: inputForAudit,
+        output: outputForAudit,
         error: args.error,
       },
       SYSTEM,

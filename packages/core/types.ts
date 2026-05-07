@@ -458,6 +458,12 @@ export interface CapabilityConfig<TInput = unknown, TOutput = unknown> {
    * row. Cheaper than `audit` for high-cardinality tool calls.
    */
   readonly observe?: boolean;
+  /**
+   * Top-level keys to mask before persisting to capability_call. Applied
+   * symmetrically to input and output. Useful for tokens, OAuth credentials,
+   * and PII the handler accepts or returns. Has no effect when audit is unset.
+   */
+  readonly auditRedact?: readonly string[];
   /** Tags for grouping in the agent's system prompt and for filter allowlists. */
   readonly tags?: readonly string[];
 }
@@ -473,6 +479,7 @@ export interface CapabilityRecord {
   readonly rateLimit?: RateLimitConfig;
   readonly audit?: AuditLevel | AuditConfig;
   readonly observe?: boolean;
+  readonly auditRedact?: readonly string[];
   readonly tags?: readonly string[];
 }
 

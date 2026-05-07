@@ -499,6 +499,81 @@ describe('dispatchCapability with audit', () => {
     expect(received).toEqual({ keep: 'yes' });
   });
 
+  test('auditRedact masks declared input keys before persisting', async () => {
+    const cap = defineCapability({
+      name: 'redact__input',
+      description: 'r',
+      inputSchema: { url: Str(), accessToken: Str() },
+      audit: AuditFull,
+      auditRedact: ['accessToken'],
+      handler: async () => ({ ok: true }),
+    });
+    await bootRegistry([cap]);
+
+    await dispatchCapability({
+      cap: cap.record,
+      input: { url: 'https://x', accessToken: 'secret-xyz' },
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+    });
+
+    const rows = await runtime.dispatch('system', 'capability_call', 'read', {}, SYSTEM);
+    const data = rows.data as { records: Array<Record<string, unknown>> };
+    const input = data.records[0].input as Record<string, unknown>;
+    expect(input.url).toBe('https://x');
+    expect(input.accessToken).toBe('[REDACTED]');
+  });
+
+  test('auditRedact masks declared output keys before persisting', async () => {
+    const cap = defineCapability({
+      name: 'redact__output',
+      description: 'r',
+      inputSchema: { x: Str() },
+      audit: AuditFull,
+      auditRedact: ['secret'],
+      handler: async () => ({ public: 'ok', secret: 'hide-me' }),
+    });
+    await bootRegistry([cap]);
+
+    await dispatchCapability({
+      cap: cap.record,
+      input: { x: 'y' },
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+    });
+
+    const rows = await runtime.dispatch('system', 'capability_call', 'read', {}, SYSTEM);
+    const data = rows.data as { records: Array<Record<string, unknown>> };
+    const output = data.records[0].output as Record<string, unknown>;
+    expect(output.public).toBe('ok');
+    expect(output.secret).toBe('[REDACTED]');
+  });
+
+  test('auditRedact does nothing without audit set', async () => {
+    const cap = defineCapability({
+      name: 'redact__noop',
+      description: 'r',
+      inputSchema: { token: Str() },
+      auditRedact: ['token'],
+      handler: async () => ({ ok: true }),
+    });
+    await bootRegistry([cap]);
+
+    await dispatchCapability({
+      cap: cap.record,
+      input: { token: 'plain' },
+      identity: SYSTEM,
+      runtime,
+      initiator: surfaceName,
+    });
+
+    const rows = await runtime.dispatch('system', 'capability_call', 'read', {}, SYSTEM);
+    const data = rows.data as { records: Array<Record<string, unknown>> };
+    expect(data.records.length).toBe(0);
+  });
+
   test('writes capability_call row with error on failure', async () => {
     const cap = defineCapability({
       name: 'audited_fail__call',

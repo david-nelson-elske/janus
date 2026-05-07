@@ -85,6 +85,7 @@ export function defineCapability<TInput = unknown, TOutput = unknown>(
     rateLimit: config.rateLimit,
     audit: config.audit,
     observe: config.observe,
+    auditRedact: config.auditRedact ? Object.freeze([...config.auditRedact]) : undefined,
     tags: config.tags ? Object.freeze([...config.tags]) : undefined,
   };
 
