@@ -186,6 +186,7 @@
       "name": "@janus/cli",
       "version": "0.0.1",
       "dependencies": {
+        "@janus/agent": "workspace:*",
         "@janus/core": "workspace:*",
         "@janus/pipeline": "workspace:*",
         "@janus/store": "workspace:*",

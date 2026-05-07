@@ -9,6 +9,7 @@
     "./format": "./format.ts"
   },
   "dependencies": {
+    "@janus/agent": "workspace:*",
     "@janus/core": "workspace:*",
     "@janus/store": "workspace:*",
     "@janus/pipeline": "workspace:*",

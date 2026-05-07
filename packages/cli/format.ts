@@ -2,6 +2,9 @@
  * Output formatters — JSON for agents, table for humans.
  */
 
+import type { CapabilityRecord } from '@janus/core';
+import { isSemanticField } from '@janus/vocabulary';
+
 export function formatJson(data: unknown): string {
   return JSON.stringify(data, null, 2);
 }
@@ -73,6 +76,75 @@ export function formatFields(schema: Record<string, unknown>, entity: string): s
 export function formatEntities(entities: string[]): string {
   if (entities.length === 0) return '(no entities)';
   return ['Entities:', '', ...entities.map((e) => `  ${e}`)].join('\n');
+}
+
+// ── Capability formatters ──────────────────────────────────────
+
+export function formatCapabilities(caps: readonly CapabilityRecord[]): string {
+  if (caps.length === 0) return '(no capabilities)';
+
+  // Group by namespace (text before first '__') for readable scanning.
+  const groups = new Map<string, CapabilityRecord[]>();
+  for (const cap of caps) {
+    const idx = cap.name.indexOf('__');
+    const ns = idx === -1 ? cap.name : cap.name.slice(0, idx);
+    let list = groups.get(ns);
+    if (!list) {
+      list = [];
+      groups.set(ns, list);
+    }
+    list.push(cap);
+  }
+
+  const lines: string[] = ['Capabilities:', ''];
+  for (const [ns, list] of groups) {
+    lines.push(`  ${ns}:`);
+    for (const cap of list) {
+      const audit = cap.audit ? ' [audited]' : '';
+      lines.push(`    ${cap.name.padEnd(32)} ${cap.description}${audit}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+export function formatCapability(cap: CapabilityRecord): string {
+  const lines: string[] = [
+    `${cap.name}`,
+    '─'.repeat(cap.name.length),
+    cap.description,
+  ];
+  if (cap.longDescription) {
+    lines.push('', cap.longDescription);
+  }
+  lines.push('', 'Input fields:');
+  for (const [name, def] of Object.entries(cap.inputSchema)) {
+    const kind = isSemanticField(def) ? def.kind : 'unknown';
+    const required = isSemanticField(def) && def.hints?.required ? ' (required)' : '';
+    const enumValues =
+      isSemanticField(def) && def.kind === 'enum'
+        ? ` ∈ {${(def as unknown as { values: readonly string[] }).values.join(', ')}}`
+        : '';
+    lines.push(`  ${name.padEnd(20)} ${kind}${required}${enumValues}`);
+  }
+  if (cap.outputSchema) {
+    lines.push('', 'Output fields:');
+    for (const [name, def] of Object.entries(cap.outputSchema)) {
+      const kind = isSemanticField(def) ? def.kind : 'unknown';
+      lines.push(`  ${name.padEnd(20)} ${kind}`);
+    }
+  }
+  if (cap.tags?.length) {
+    lines.push('', `Tags: ${cap.tags.join(', ')}`);
+  }
+  const settings: string[] = [];
+  if (cap.audit) settings.push('audited');
+  if (cap.auditRedact?.length) settings.push(`redacts: ${cap.auditRedact.join(', ')}`);
+  if (cap.policy) settings.push('policy enforced');
+  if (cap.rateLimit) settings.push(`rate-limited (${cap.rateLimit.max}/${cap.rateLimit.window}ms)`);
+  if (settings.length) {
+    lines.push('', `Settings: ${settings.join(' · ')}`);
+  }
+  return lines.join('\n');
 }
 
 // ── Helpers ──────────────────────────────────────────────────────

@@ -6,6 +6,8 @@
 
 import type { CompileResult } from '@janus/core';
 import type { DispatchRuntime } from '@janus/pipeline';
+import { dispatchCapability } from '@janus/agent';
+import { isSemanticField } from '@janus/vocabulary';
 import {
   formatJson,
   formatTable,
@@ -13,6 +15,8 @@ import {
   formatOperations,
   formatFields,
   formatEntities,
+  formatCapabilities,
+  formatCapability,
 } from './format';
 
 // ── Argument parsing ────────────────────────────────────────────
@@ -156,6 +160,12 @@ export async function executeCommand(
       return cmdDelete(parsed, runtime!, parsed.json, initiator, identity);
     case 'dispatch':
       return cmdDispatch(parsed, runtime!, parsed.json, initiator, identity);
+    case 'capabilities':
+      return cmdCapabilities(registry!, parsed.json);
+    case 'capability':
+      return cmdCapability(parsed.entity, registry!, parsed.json);
+    case 'call':
+      return cmdCall(parsed, runtime!, registry!, parsed.json, initiator, identity);
     case 'help':
     default:
       return cmdHelp();
@@ -279,10 +289,99 @@ async function cmdDispatch(parsed: ParsedArgs, runtime: DispatchRuntime, json: b
   }, identity);
 }
 
-function cmdHelp(appName = 'janus', extraHelp = ''): string {
-  return `${appName} — entity CLI
+// ── Capability commands ────────────────────────────────────────
 
-Commands:
+function cmdCapabilities(registry: CompileResult, json: boolean): string {
+  const caps = Array.from(registry.capabilities.values()).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
+  if (json) {
+    return formatJson(
+      caps.map((c) => ({
+        name: c.name,
+        description: c.description,
+        tags: c.tags ?? [],
+        audited: !!c.audit,
+      })),
+    );
+  }
+  return formatCapabilities(caps);
+}
+
+function cmdCapability(name: string | undefined, registry: CompileResult, json: boolean): string {
+  if (!name) return 'Error: capability name is required (e.g. "janus capability drive__search")';
+  const cap = registry.capability(name);
+  if (!cap) return `Error: unknown capability '${name}'`;
+  if (json) {
+    return formatJson({
+      name: cap.name,
+      description: cap.description,
+      longDescription: cap.longDescription,
+      inputSchema: schemaForJson(cap.inputSchema),
+      outputSchema: cap.outputSchema ? schemaForJson(cap.outputSchema) : undefined,
+      tags: cap.tags ?? [],
+      audited: !!cap.audit,
+      auditRedact: cap.auditRedact ?? [],
+      hasPolicy: !!cap.policy,
+      hasRateLimit: !!cap.rateLimit,
+    });
+  }
+  return formatCapability(cap);
+}
+
+function schemaForJson(
+  schema: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [name, def] of Object.entries(schema)) {
+    if (isSemanticField(def)) {
+      out[name] = {
+        kind: def.kind,
+        required: !!def.hints?.required,
+        ...('values' in def ? { values: (def as { values: readonly string[] }).values } : {}),
+      };
+    } else {
+      out[name] = { kind: 'unknown' };
+    }
+  }
+  return out;
+}
+
+async function cmdCall(
+  parsed: ParsedArgs,
+  runtime: DispatchRuntime,
+  registry: CompileResult,
+  json: boolean,
+  initiator = 'system',
+  identity?: CLIIdentity,
+): Promise<string> {
+  if (!parsed.entity) return 'Error: capability name is required (e.g. "janus call drive__search --query foo")';
+  const cap = registry.capability(parsed.entity);
+  if (!cap) return `Error: unknown capability '${parsed.entity}'`;
+
+  const input = flagsToInput(parsed.flags);
+  const id = identity ?? { id: 'system', roles: ['system'] };
+
+  const response = await dispatchCapability({
+    cap,
+    input,
+    identity: id,
+    runtime,
+    initiator,
+    registry,
+  });
+
+  if (json) return formatJson(response);
+  if (!response.ok) return `Error [${response.error?.kind ?? 'unknown'}]: ${response.error?.message ?? 'unknown'}`;
+  if (response.data === null || response.data === undefined) return '(no data)';
+  if (typeof response.data === 'object') return formatJson(response.data);
+  return String(response.data);
+}
+
+function cmdHelp(appName = 'janus', extraHelp = ''): string {
+  return `${appName} — entity + capability CLI
+
+Entity commands:
   entities                                List all entities
   operations <entity>                     List operations for an entity
   fields <entity>                         List fields for an entity
@@ -291,6 +390,11 @@ Commands:
   update <entity> --id <id> --field val   Update a record
   delete <entity> --id <id>               Delete a record
   dispatch <entity>:<op> [--id <id>]      Dispatch a named operation
+
+Capability commands:
+  capabilities                            List all capabilities
+  capability <name>                       Show capability details
+  call <name> --field value ...           Invoke a capability
 
 Flags:
   --json                                  Output as JSON (for agents)

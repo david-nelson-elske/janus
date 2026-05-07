@@ -201,3 +201,131 @@ describe('parseArgs', () => {
     expect(parsed.command).toBe('help');
   });
 });
+
+// ── Capability commands ────────────────────────────────────────
+
+describe('capabilities command', () => {
+  test('lists all dev-app capabilities', async () => {
+    const output = await run('capabilities');
+    expect(output).toContain('Capabilities:');
+    expect(output).toContain('system__time');
+    expect(output).toContain('web__fetch');
+    expect(output).toContain('framework__describe');
+  });
+
+  test('shows audit flag for capabilities with audit configured', async () => {
+    const output = await run('capabilities');
+    // web__fetch declares audit: AuditFull in the dev-app demo
+    const webLine = output.split('\n').find((l) => l.includes('web__fetch'));
+    expect(webLine).toContain('[audited]');
+  });
+
+  test('groups capabilities by namespace', async () => {
+    const output = await run('capabilities');
+    expect(output).toContain('  web:');
+    expect(output).toContain('  system:');
+    expect(output).toContain('  framework:');
+  });
+
+  test('JSON output returns capability metadata array', async () => {
+    const output = await run('capabilities --json');
+    const data = JSON.parse(output);
+    expect(Array.isArray(data)).toBe(true);
+    const names = data.map((c: { name: string }) => c.name).sort();
+    expect(names).toEqual(['framework__describe', 'system__time', 'web__fetch']);
+    const web = data.find((c: { name: string }) => c.name === 'web__fetch');
+    expect(web.audited).toBe(true);
+    expect(web.tags).toContain('web');
+  });
+});
+
+describe('capability command', () => {
+  test('shows details for a known capability', async () => {
+    const output = await run('capability web__fetch');
+    expect(output).toContain('web__fetch');
+    expect(output).toContain('Fetch a URL');
+    expect(output).toContain('Input fields:');
+    expect(output).toContain('url');
+    expect(output).toContain('(required)');
+  });
+
+  test('shows output schema when declared', async () => {
+    const output = await run('capability web__fetch');
+    expect(output).toContain('Output fields:');
+    expect(output).toContain('status');
+    expect(output).toContain('truncated');
+  });
+
+  test('shows settings line when audit is configured', async () => {
+    const output = await run('capability web__fetch');
+    expect(output).toContain('Settings:');
+    expect(output).toContain('audited');
+  });
+
+  test('reports unknown capability cleanly', async () => {
+    const output = await run('capability nonexistent__call');
+    expect(output).toContain('unknown capability');
+  });
+
+  test('requires a capability name', async () => {
+    const output = await run('capability');
+    expect(output).toContain('capability name is required');
+  });
+
+  test('JSON output exposes structured schema', async () => {
+    const output = await run('capability web__fetch --json');
+    const data = JSON.parse(output);
+    expect(data.name).toBe('web__fetch');
+    expect(data.audited).toBe(true);
+    expect(data.inputSchema.url.kind).toBe('str');
+    expect(data.inputSchema.url.required).toBe(true);
+  });
+});
+
+describe('call command', () => {
+  test('invokes system__time and returns ISO string', async () => {
+    const output = await run('call system__time');
+    const data = JSON.parse(output);
+    expect(typeof data.iso).toBe('string');
+    expect(data.iso).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  test('JSON output wraps response in AgentResponse shape', async () => {
+    const output = await run('call system__time --json');
+    const res = JSON.parse(output);
+    expect(res.ok).toBe(true);
+    expect(res.data.iso).toMatch(/^\d{4}-/);
+  });
+
+  test('rejects missing required input clearly', async () => {
+    const output = await run('call web__fetch');
+    expect(output).toContain('Error');
+    expect(output).toContain("requires field 'url'");
+  });
+
+  test('reports unknown capability', async () => {
+    const output = await run('call nonexistent__call');
+    expect(output).toContain("unknown capability 'nonexistent__call'");
+  });
+
+  test('requires a capability name', async () => {
+    const output = await run('call');
+    expect(output).toContain('capability name is required');
+  });
+
+  test('passes flag values through to the handler', async () => {
+    const output = await run('call web__fetch --url "data:text/plain,hello"');
+    const data = JSON.parse(output);
+    expect(data.body).toBe('hello');
+    expect(data.ok).toBe(true);
+  });
+});
+
+describe('help includes capability commands', () => {
+  test('mentions capabilities, capability, and call', async () => {
+    const output = await run('help');
+    expect(output).toContain('capabilities');
+    expect(output).toContain('capability <name>');
+    expect(output).toContain('call <name>');
+  });
+});
