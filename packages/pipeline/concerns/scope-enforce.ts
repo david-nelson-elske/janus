@@ -445,7 +445,18 @@ export const scopeEnforce: ExecutionHandler = async (ctx) => {
       const callerTier =
         'tier' in callerScope ? callerScope.tier : undefined;
       if (callerTier !== undefined) {
-        const writeTiers = (entity as any)?.writeTiers as readonly string[] | undefined;
+        // G2 (2026-05-08): writeTiers can be either a static array or a
+        // function `(input, scope) => Tier[]` that resolves the effective
+        // tier list for THIS specific input. Function form lets content
+        // entities widen writes for regional rows while keeping federal
+        // rows federal-only.
+        const writeTiersDecl = (entity as any)?.writeTiers as
+          | readonly string[]
+          | ((input: Record<string, unknown>, scope: any) => readonly string[])
+          | undefined;
+        const writeTiers = typeof writeTiersDecl === 'function'
+          ? writeTiersDecl(input as Record<string, unknown>, callerScope)
+          : writeTiersDecl;
         if (writeTiers && !writeTiers.includes(callerTier)) {
           denied(
             `Access denied: ${operation} on '${ctx.entity}' requires write tier in [${writeTiers.join(', ')}]; caller tier is '${callerTier}'`,

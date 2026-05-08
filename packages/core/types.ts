@@ -190,8 +190,20 @@ export interface GraphNodeRecord {
    * (balcony-solar Phase 3, D-22 + D-23). When present, scope-enforce denies
    * non-system create/update/delete calls whose caller-scope tier is not in
    * this list. Consumers read this via `app.registry.entity(name).writeTiers`.
+   *
+   * Function form (G2 / 2026-05-08): when content entities want
+   * scope-conditional writes (e.g., a row with `region: null` is federal-
+   * only, but a row with `region: <region>` permits regional writes from
+   * that same region), declare writeTiers as `(input, scope) => Tier[]`.
+   * The function returns the effective allowlist for THIS specific input.
+   * Existing static-array declarations preserve behaviour.
    */
-  readonly writeTiers?: readonly ('federal' | 'regional' | 'municipal' | 'system')[];
+  readonly writeTiers?:
+    | readonly ('federal' | 'regional' | 'municipal' | 'system')[]
+    | ((
+        input: Record<string, unknown>,
+        scope: Record<string, unknown> | string,
+      ) => readonly ('federal' | 'regional' | 'municipal' | 'system')[]);
   /**
    * Entity-declared field-level write guard surfaced from `DefineConfig`
    * (balcony-solar Phase 3, D-24 + D-25). Invoked inside scope-enforce on
@@ -245,8 +257,15 @@ export interface DefineConfig {
    * messaging entities declare `writeTiers: ['federal','system']` so only
    * federal-tier scopes and the 'system' sentinel can write; regional /
    * municipal callers are denied. Unset preserves pre-Phase-3 behaviour.
+   *
+   * Function form (G2 / 2026-05-08) — see GraphNodeRecord above.
    */
-  readonly writeTiers?: readonly ('federal' | 'regional' | 'municipal' | 'system')[];
+  readonly writeTiers?:
+    | readonly ('federal' | 'regional' | 'municipal' | 'system')[]
+    | ((
+        input: Record<string, unknown>,
+        scope: Record<string, unknown> | string,
+      ) => readonly ('federal' | 'regional' | 'municipal' | 'system')[]);
   /**
    * Field-level write guard. Invoked inside scope-enforce on create/update
    * when the scope tier is not in the entity's privileged set. The guard
