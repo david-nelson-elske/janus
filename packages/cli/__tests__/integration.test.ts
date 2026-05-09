@@ -196,6 +196,36 @@ describe('parseArgs', () => {
     expect(parsed.flags.priority).toBe('high');
   });
 
+  test('parses --key=value flags (equals form)', () => {
+    const parsed = parseArgs([
+      'bun',
+      'janus',
+      'validate',
+      '--paper=balcony-solar-canada',
+      '--pillars=link,retrieve,passage,semantic',
+    ]);
+    expect(parsed.flags.paper).toBe('balcony-solar-canada');
+    expect(parsed.flags.pillars).toBe('link,retrieve,passage,semantic');
+  });
+
+  test('parses mixed --key=value and --key value flags', () => {
+    const parsed = parseArgs([
+      'bun',
+      'janus',
+      'validate',
+      '--paper=balcony-solar-canada',
+      '--limit',
+      '10',
+    ]);
+    expect(parsed.flags.paper).toBe('balcony-solar-canada');
+    expect(parsed.flags.limit).toBe('10');
+  });
+
+  test('--key=value handles values containing =', () => {
+    const parsed = parseArgs(['bun', 'janus', 'read', '--where.field=key=value']);
+    expect(parsed.flags['where.field']).toBe('key=value');
+  });
+
   test('defaults to help', () => {
     const parsed = parseArgs(['bun', 'janus']);
     expect(parsed.command).toBe('help');

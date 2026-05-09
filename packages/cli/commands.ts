@@ -39,9 +39,20 @@ export function parseArgs(argv: string[]): ParsedArgs {
     const arg = args[i];
     if (arg === '--json') {
       json = true;
-    } else if (arg.startsWith('--') && i + 1 < args.length) {
-      const key = arg.slice(2);
-      flags[key] = args[++i];
+    } else if (arg.startsWith('--')) {
+      // Two forms: `--key value` (space-separated) and `--key=value`
+      // (equals-separated). Both are common — the latter avoids ambiguity
+      // when the value starts with `--`.
+      const eq = arg.indexOf('=');
+      if (eq > 2) {
+        flags[arg.slice(2, eq)] = arg.slice(eq + 1);
+      } else if (i + 1 < args.length) {
+        flags[arg.slice(2)] = args[++i];
+      } else {
+        // Bare trailing flag with no value (e.g. `--help` at end-of-line);
+        // record as empty string. Validators downstream decide what to do.
+        flags[arg.slice(2)] = '';
+      }
     } else {
       positional.push(arg);
     }
