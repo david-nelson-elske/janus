@@ -1,0 +1,17 @@
+{
+  "name": "@janus/controllers",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./client": "./client-bootstrap.ts",
+    "./base": "./base.ts"
+  },
+  "dependencies": {
+    "@hotwired/stimulus": "^3.2.2"
+  },
+  "janus": {
+    "tier": "source"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@janus/router",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "dependencies": {
+    "@janus/controllers": "workspace:*",
+    "hono": "^4.7.0"
+  },
+  "janus": {
+    "tier": "composition"
+  }
+}
