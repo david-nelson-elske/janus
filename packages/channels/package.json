@@ -1,0 +1,15 @@
+{
+  "name": "@janus/channels",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./client": "./client.ts",
+    "./server": "./server.ts"
+  },
+  "dependencies": {},
+  "janus": {
+    "tier": "source"
+  }
+}

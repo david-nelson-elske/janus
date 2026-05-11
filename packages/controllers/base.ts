@@ -15,12 +15,14 @@
 
 import { Controller } from '@hotwired/stimulus';
 import { getBus, type JanusBus, type BusUnsubscribe } from './bus';
+import { registerChannelHandler } from '@janus/channels/client';
+import { findControllerSubscriptions } from './manifest-lookup';
 
-// ── Stub interfaces (spec 2 will refine) ──────────────────────────
+// ── Channel event shape (mirrors @janus/channels) ─────────────────
 
 export interface ChannelEvent {
   readonly channel: string;
-  readonly payload: unknown;
+  readonly payload: Readonly<Record<string, unknown>>;
   readonly scope: Readonly<Record<string, unknown>>;
   readonly ts: number;
 }
@@ -72,30 +74,64 @@ export abstract class JanusController extends Controller<HTMLElement> {
    * Subscribe to a server channel. The returned unsubscribe is tracked
    * automatically and called on `disconnect()`.
    *
-   * v1: stub. Logs a warning and returns a no-op.
+   * v1.5: resolved against the page manifest's `subscriptions` list
+   * for this controller — the scope passed to the SSE bridge is the
+   * one declared at SSR time. Calling `subscribe()` with a channel
+   * that is not in the manifest logs a warning in dev and is a no-op.
    */
   protected subscribe(channel: string, handler: (event: ChannelEvent) => void): Unsubscribe {
-    void handler;
-    if (this.#isDev()) {
-      console.warn(
-        `[JanusController:${this.identifier}] subscribe("${channel}") — channel layer not yet implemented (spec 2)`,
-      );
+    const scopes = findControllerSubscriptions(this.identifier, channel);
+
+    if (scopes.length === 0) {
+      if (this.#isDev()) {
+        console.warn(
+          `[JanusController:${this.identifier}] subscribe("${channel}") — channel not in manifest subscriptions`,
+        );
+      }
+      const unsub: Unsubscribe = () => {};
+      this.#subscriptions.push(unsub);
+      return unsub;
     }
-    const unsub: Unsubscribe = () => {};
+
+    // The manifest may list multiple subscriptions for the same channel
+    // under one controller (different scopes). Register one client
+    // handler per scope so the SSE filter is precise.
+    const unsubs = scopes.map((scope) =>
+      registerChannelHandler(channel, scope, (event) => {
+        handler({
+          channel: event.channel,
+          payload: event.payload,
+          scope: event.scope,
+          ts: event.ts,
+        });
+      }),
+    );
+    const unsub: Unsubscribe = () => {
+      for (const u of unsubs) {
+        try {
+          u();
+        } catch {
+          /* tolerated */
+        }
+      }
+    };
     this.#subscriptions.push(unsub);
     return unsub;
   }
 
   /**
-   * Publish a payload to a server channel.
+   * Publish a payload to a server channel from the client.
    *
-   * v1: stub. Logs a warning.
+   * Client-originated channel publishes are uncommon — most publishes
+   * happen server-side from operation handlers. v1.5 keeps this as a
+   * dev-warning stub; M5 (capability graph) will define the wire path
+   * for client → server channel publishes with per-actor ACLs.
    */
   protected publish(channel: string, payload: unknown): void {
     void payload;
     if (this.#isDev()) {
       console.warn(
-        `[JanusController:${this.identifier}] publish("${channel}") — channel layer not yet implemented (spec 2)`,
+        `[JanusController:${this.identifier}] publish("${channel}") — client-originated channel publish not wired in v1.5`,
       );
     }
   }

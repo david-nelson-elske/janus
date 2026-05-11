@@ -30,6 +30,7 @@
         "@deepgram/sdk": "^3.9.0",
         "@google/genai": "^1.51.0",
         "@janus/agent": "workspace:*",
+        "@janus/channels": "workspace:*",
         "@janus/cli": "workspace:*",
         "@janus/client": "workspace:*",
         "@janus/controllers": "workspace:*",
@@ -184,6 +185,10 @@
       "name": "@janus/calendar",
       "version": "0.0.1",
     },
+    "packages/channels": {
+      "name": "@janus/channels",
+      "version": "0.0.1",
+    },
     "packages/cli": {
       "name": "@janus/cli",
       "version": "0.0.1",
@@ -212,6 +217,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@hotwired/stimulus": "^3.2.2",
+        "@janus/channels": "workspace:*",
       },
     },
     "packages/core": {
@@ -336,6 +342,8 @@
     "@janus/agent-mcp": ["@janus/agent-mcp@workspace:packages/agent-mcp"],
 
     "@janus/calendar": ["@janus/calendar@workspace:packages/calendar"],
+
+    "@janus/channels": ["@janus/channels@workspace:packages/channels"],
 
     "@janus/cli": ["@janus/cli@workspace:packages/cli"],
 

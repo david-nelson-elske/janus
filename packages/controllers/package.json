@@ -9,7 +9,8 @@
     "./base": "./base.ts"
   },
   "dependencies": {
-    "@hotwired/stimulus": "^3.2.2"
+    "@hotwired/stimulus": "^3.2.2",
+    "@janus/channels": "workspace:*"
   },
   "janus": {
     "tier": "source"

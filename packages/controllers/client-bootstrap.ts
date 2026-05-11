@@ -14,10 +14,10 @@
  * implementation so `JanusController#invoke` resolves the target.
  */
 
-import { Application, type Controller } from '@hotwired/stimulus';
+import { Application, type Controller, type ControllerConstructor } from '@hotwired/stimulus';
 import type { PageManifest } from './manifest';
-
-type ControllerCtor = new (...args: unknown[]) => Controller<HTMLElement>;
+import { collectAllSubscriptions, installManifestLookup } from './manifest-lookup';
+import { configureChannelClient, openClientStream } from '@janus/channels/client';
 
 export interface BootOptions {
   /**
@@ -25,7 +25,7 @@ export interface BootOptions {
    * name appears in the manifest will be registered; the rest are
    * skipped (with a debug log in dev mode).
    */
-  readonly controllers: Readonly<Record<string, ControllerCtor>>;
+  readonly controllers: Readonly<Record<string, ControllerConstructor>>;
 
   /**
    * When true, the bootstrap logs detail about its decisions: skipped
@@ -33,6 +33,12 @@ export interface BootOptions {
    * to true when `location.hostname` is `localhost` or `127.0.0.1`.
    */
   readonly devMode?: boolean;
+
+  /**
+   * Optional override for the SSE endpoint the channel client opens.
+   * Defaults to `/api/channels/stream` (matches `@janus/channels/server`).
+   */
+  readonly channelStreamPath?: string;
 
   /**
    * Optional hook called once the Stimulus application has started
@@ -57,6 +63,21 @@ export function bootControllers(opts: BootOptions): BootResult {
   const manifest = readManifest(devMode);
   if (!manifest) {
     return { app: null, manifest: null, registered: [] };
+  }
+
+  // Install the manifest so `JanusController#subscribe()` can resolve
+  // the SSR-declared subscription scopes for the calling controller.
+  installManifestLookup(manifest);
+
+  // Open the page-wide SSE stream with the union of all declared
+  // subscriptions. Controllers register handlers in `janusConnect()`;
+  // their handlers attach to the already-open stream.
+  if (opts.channelStreamPath) {
+    configureChannelClient({ streamPath: opts.channelStreamPath });
+  }
+  const subs = collectAllSubscriptions();
+  if (subs.length > 0) {
+    openClientStream(subs);
   }
 
   const allowed = new Set(manifest.controllers.map((c) => c.name));
