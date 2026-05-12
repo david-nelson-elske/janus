@@ -37,6 +37,7 @@
         "@janus/core": "workspace:*",
         "@janus/http": "workspace:*",
         "@janus/pipeline": "workspace:*",
+        "@janus/projections": "workspace:*",
         "@janus/router": "workspace:*",
         "@janus/store": "workspace:*",
         "@janus/vocabulary": "workspace:*",
@@ -264,6 +265,16 @@
         "liquidjs": "^10.25.2",
       },
     },
+    "packages/projections": {
+      "name": "@janus/projections",
+      "version": "0.0.1",
+      "dependencies": {
+        "@janus/channels": "workspace:*",
+        "@janus/core": "workspace:*",
+        "@janus/pipeline": "workspace:*",
+        "@janus/store": "workspace:*",
+      },
+    },
     "packages/router": {
       "name": "@janus/router",
       "version": "0.0.1",
@@ -362,6 +373,8 @@
     "@janus/i18n": ["@janus/i18n@workspace:packages/i18n"],
 
     "@janus/pipeline": ["@janus/pipeline@workspace:packages/pipeline"],
+
+    "@janus/projections": ["@janus/projections@workspace:packages/projections"],
 
     "@janus/router": ["@janus/router@workspace:packages/router"],
 
