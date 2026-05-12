@@ -8,6 +8,17 @@
 export { default as Anthropic } from '@anthropic-ai/sdk';
 
 export { agentSurface } from './surface';
+export {
+  declareAgentSurface,
+  validateAgentSurfaces,
+  type AgentSurfaceDeclaration,
+  type AgentSurfaceRegistry,
+  type SurfaceSubscription,
+  type SurfaceInvocation,
+  type SurfaceRuntime,
+  type SurfaceAudit,
+  type ValidationRegistries,
+} from './declare-surface';
 export { deriveInteractionLevels, discoverTools, discoverCapabilities, discoverNavigationTools, buildAgentContext } from './context';
 export type { BuildAgentContextConfig, DiscoverCapabilitiesOptions } from './context';
 export { createAgentLoop, toClaudeTools, toClaudeToolsFromCapabilities, parseToolName, dispatchCapability, buildSystemPrompt } from './claude';

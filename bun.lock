@@ -162,8 +162,10 @@
       "version": "0.0.1",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.82.0",
+        "@janus/channels": "workspace:*",
         "@janus/core": "workspace:*",
         "@janus/pipeline": "workspace:*",
+        "@janus/projections": "workspace:*",
         "@janus/store": "workspace:*",
         "@janus/vocabulary": "workspace:*",
         "openai": "^6.33.0",
